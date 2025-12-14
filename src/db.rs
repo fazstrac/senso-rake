@@ -105,10 +105,16 @@ pub fn start_db_worker(path: Option<String>, mqtt_messages_not_flushed_to_db: In
             match job.command {
                 DbCommand::InsertBatch(batch, table) => {
                     let res: Result<()> = (|| {
-                        let mut appender = conn.appender(&table)?;                        
-                        appender.append_record_batch(batch)?;
-                        appender.flush()?;                        
-                        Ok(())
+                        // Whitelist allowed table names to prevent SQL injection
+                        match table.as_str() {
+                            "measurements" => {
+                                let mut appender = conn.appender(&table)?;
+                                appender.append_record_batch(batch)?;
+                                appender.flush()?;
+                                Ok(())
+                            }
+                            _ => Err(anyhow::anyhow!("Invalid table name")),
+                        }
                     })();
                     let _ = job.response.send(res.map(|_| DbResponse::InsertResult));
                 }
