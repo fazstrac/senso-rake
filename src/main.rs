@@ -3,7 +3,7 @@
 // `server`, `state`, `handlers`, and `mqtt` modules under `src/` so each
 // responsibility is isolated and easier to navigate / test.
 mod state;
-mod handlers;
+mod http_server;
 mod mqtt;
 mod mqtt_buffer;
 mod db;

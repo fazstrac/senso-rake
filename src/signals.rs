@@ -8,6 +8,7 @@ pub async fn start_signal_handler(
     mqtt_join: tokio::task::JoinHandle<()>,
     db_handle_for_signal: db::DbHandle,
     _db_join: tokio::task::JoinHandle<()>,
+    _http_join_handle: tokio::task::JoinHandle<()>,
 ) -> tokio::task::JoinHandle<()> {
 
     let join_handle = tokio::spawn(async move {
@@ -20,19 +21,29 @@ pub async fn start_signal_handler(
             // Notify MQTT task to shut down. It will flush and shut down the DB.
             shutdown_notify_task2.notify_waiters();
 
-            println!("Waiting for MQTT task and DB thread to finish...");
+            println!("Waiting for HTTP, MQTT task and DB thread to finish...");
 
             // REFACTOR: refactor http handlers and mqtt task to share db handle properly
             // also refactor http handler into its own module and create start_http_server function
+
+            _http_join_handle.await.unwrap_or_else(|e| {
+                eprintln!("Error joining HTTP server task on shutdown: {}", e);
+            });
+
+            println!("HTTP server has shut down.");
 
             // Await MQTT task completion
             mqtt_join.await.unwrap_or_else(|e| {
                 eprintln!("Error joining MQTT task on shutdown: {}", e);
             });
 
+            println!("MQTT worker has shut down.");
+
             db_handle_for_signal.shutdown().await.unwrap_or_else(|e| {
                 eprintln!("Error shutting down DB on shutdown: {}", e);
             });
+
+            println!("Database has shut down.");
 
             // Join DB thread
             _db_join.await.unwrap_or_else(|e| {
@@ -43,7 +54,6 @@ pub async fn start_signal_handler(
         };
 
         // Handle signals for SIGHUP (checkpoint), SIGINT and SIGTERM (graceful shutdown)
-        // Ugly and should be refactored to reduce duplication
         // As it is now, does affect 
         loop {
             tokio::select! {
