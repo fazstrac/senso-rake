@@ -50,7 +50,7 @@ pub async fn start_mqtt_worker(
                 anyhow::anyhow!("Invalid MQTT_PORT value, expected a number, got: {}", e)
             })?;
             mqttoptions = MqttOptions::new("rust_exporter_client", &host, p);
-            println!("Connecting to MQTT broker at {}:{:?}", host, p);            
+            println!("Connecting to MQTT broker at {}:{}", host, p);            
         }
         // Only host provided, default to port 1883
         (Some(host), None) => {
