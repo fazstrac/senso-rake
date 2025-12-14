@@ -26,7 +26,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     // Start MQTT worker
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
-    let shutdown_notify_task = shutdown_notify.clone();
+    let shutdown_notify_for_mqtt_task = shutdown_notify.clone();
     let mqtt_messages_received_counter_task = mqtt_messages_received_counter.clone();
     let mqtt_messages_not_flushed_to_db_task = mqtt_messages_not_flushed_to_db.clone();
     let db_for_task = db_handle.clone();
@@ -34,26 +34,26 @@ pub async fn run() -> anyhow::Result<()> {
         mqtt_messages_received_counter_task, 
         mqtt_messages_not_flushed_to_db_task, 
         db_for_task, 
-        shutdown_notify_task
+        shutdown_notify_for_mqtt_task
     ).await.unwrap();
 
     // Start HTTP server
-    let shutdown_notify_task3 = shutdown_notify.clone();
+    let shutdown_notify_task_for_http_task = shutdown_notify.clone();
     let http_db_handle = db_handle.clone();
     let http_join_handle = http_server::start_http_server(
         http_db_handle, 
         store.clone(), 
         registry.clone(), 
-        shutdown_notify_task3
+        shutdown_notify_task_for_http_task
     ).await.unwrap();
 
-    // Spawn a task to handle Unix signals for graceful shutdown
-    let shutdown_notify_task2 = shutdown_notify.clone();
-    let db_handle_for_signal_task = db_handle.clone();
+    // Start signals handler to handle signals for graceful shutdown
+    // Signals handler will take ownership of shutdown_notify, database and join handles
+    // TODO: refactor logic to better reflect that signals handler should orchestrate the workers
     let signal_handler = signals::start_signal_handler(
-        shutdown_notify_task2,
+        shutdown_notify,
         mqtt_join_handle,
-        db_handle_for_signal_task,
+        db_handle,
         db_join_handle,
         http_join_handle,
     ).await;

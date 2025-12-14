@@ -53,7 +53,6 @@ pub async fn start_signal_handler(
         };
 
         // Handle signals for SIGHUP (checkpoint), SIGINT and SIGTERM (graceful shutdown)
-        // As it is now, does affect 
         loop {
             tokio::select! {
                 _ = sighup.recv() => {
