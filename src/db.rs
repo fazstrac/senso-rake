@@ -99,8 +99,6 @@ pub fn start_db_worker(path: Option<String>) -> anyhow::Result<(DbHandle, JoinHa
     // Spawn a blocking thread that owns the DuckDB connection.
     // TODO: Handle connection errors more gracefully - currently panics on failure which is not OK
     let join = task::spawn_blocking(move || {
-
-
         while let Ok(job) = rx.recv() {
             match job.command {
                 DbCommand::InsertBatch(batch, table) => {

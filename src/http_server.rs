@@ -1,36 +1,27 @@
-// HTTP handlers for the service. These are thin wrappers around the shared
-// `Store` and the Prometheus `Registry`. They intentionally do minimal
-// validation to keep the example concise — add validation as needed.
-use crate::{state::{key_for, save_mappings, Mapping, Store}, db};
-use axum::{body::Body, extract::Extension, http::{HeaderMap, Request, StatusCode, header::CONTENT_TYPE, HeaderValue}, response::IntoResponse, Json};
+// HTTP handlers for the service. This module sets up the Axum
+// router with routes, handlers, and middleware.
+use crate::{state::{key_for, save_mappings, Mapping, Store}};
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
 
-use axum::{routing::{get, put}, Router};
-
+use axum::{Json, Router};
+use axum::body::Body;
+use axum::extract::Extension;
+use axum::http::{HeaderMap, Method, Request, StatusCode, HeaderValue};
+use axum::http::header::CONTENT_TYPE;
 use axum::middleware::{self, Next};
-use axum::response::Response;
-use axum::http::{Method,};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, put};
 
 
 pub async fn start_http_server(
-    http_db_handle: db::DbHandle, 
-    store: Store, 
-    registry: Arc<Registry>, 
-    shutdown_notify: Arc<tokio::sync::Notify>) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-    // Build the HTTP app. Layers are applied from bottom -> top: the
-    // `Extension` layers provide shared state (Store and Registry) to
-    // handlers. The CORS middleware is mounted last so it can ensure
-    // headers are applied to all responses.
-    let app = Router::new()
-        .route("/mapping", put(put_mapping).get(list_mappings))
-        .route("/metrics", get(metrics_handler))
-        .route("/health", get(|| async { "ok" }))
-        .fallback_service(get(spa_handler))
-        .layer(Extension(store))
-        .layer(Extension(registry))
-        .layer(Extension(http_db_handle))
-        .layer(middleware::from_fn(cors_middleware));
+    // http_db_handle: db::DbHandle, // commented out for now wait for refactor
+    store: Store,
+    registry: Arc<Registry>,
+    shutdown_notify: Arc<tokio::sync::Notify>,
+) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+
+    let app = build_router(store, registry);
 
     let bind_addr = "0.0.0.0:3000";
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -41,9 +32,8 @@ pub async fn start_http_server(
         let server = axum::serve(listener, app);
 
         let shutdown_future = {
-            let shutdown_notify_task3 = shutdown_notify.clone();
             async move {
-                shutdown_notify_task3.notified().await;
+                shutdown_notify.notified().await;
                 println!("HTTP server shutdown signal received.");
             }
         };
@@ -52,6 +42,24 @@ pub async fn start_http_server(
     });
 
     Ok(join_handle)
+}
+
+// Build the Axum router with routes, handlers, and middleware.
+// This is separate function for testability.
+fn build_router(
+    // http_db_handle: db::DbHandle, 
+    store: Store, 
+    registry: Arc<Registry>
+) -> Router {
+    Router::new()
+        .route("/mappings", put(put_mapping).get(list_mappings))
+        .route("/metrics", get(metrics_handler))
+        .route("/health", get(|| async { StatusCode::OK }))
+        .fallback(spa_handler)
+        .layer(Extension(store))
+        .layer(Extension(registry))
+        // .layer(Extension(http_db_handle)) // commented out for now to wait for refactor
+        .layer(middleware::from_fn(cors_middleware))
 }
 
 
@@ -96,23 +104,22 @@ async fn metrics_handler(Extension(registry): Extension<Arc<Registry>>) -> (Head
 /// server or embed assets in the binary.
 async fn spa_handler(req: Request<Body>) -> impl IntoResponse {
     let path = req.uri().path();
-    let rel = if path == "/" { "ui/dist/index.html".to_string() } else { format!("ui/dist{}", path) };
+    let rel = match path {
+        "/" => "ui/dist/index.html".to_string(),
+        _ => format!("ui/dist{}", path),
+    };
 
     match tokio::fs::read(&rel).await {
         Ok(bytes) => {
-            let content_type = if rel.ends_with(".html") {
-                "text/html; charset=utf-8"
-            } else if rel.ends_with(".js") {
-                "application/javascript; charset=utf-8"
-            } else if rel.ends_with(".css") {
-                "text/css; charset=utf-8"
-            } else if rel.ends_with(".json") {
-                "application/json; charset=utf-8"
-            } else if rel.ends_with(".wasm") {
-                "application/wasm"
-            } else {
-                "application/octet-stream"
+            let content_type = match rel.as_str() {
+                p if p.ends_with(".html") => "text/html; charset=utf-8",
+                p if p.ends_with(".js") => "application/javascript; charset=utf-8",
+                p if p.ends_with(".css") => "text/css; charset=utf-8",
+                p if p.ends_with(".json") => "application/json; charset=utf-8",
+                p if p.ends_with(".wasm") => "application/wasm",
+                _ => "application/octet-stream",
             };
+
             let mut headers = HeaderMap::new();
             headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
             (headers, bytes).into_response()
@@ -148,4 +155,64 @@ async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response
     headers.insert("access-control-allow-methods", allow_methods);
     headers.insert("access-control-allow-headers", allow_headers);
     res
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{Request, StatusCode};
+    use axum::body::Body;
+    use prometheus::Registry;
+    use std::sync::Arc;
+
+    use axum::Router;
+    use axum::http::Method;
+
+    use tower::util::ServiceExt; // for `oneshot` method
+
+    fn build_test_app() -> Router {
+        let store = Store::default();
+        let registry = Arc::new(Registry::new());
+        // let db: db::DbHandle;
+
+        build_router(store, registry)
+    }
+
+    #[tokio::test]
+    async fn health_endpoint_works() {
+        let app = build_test_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_works() {
+        let app = build_test_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
 }

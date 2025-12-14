@@ -34,9 +34,9 @@ pub async fn run() -> anyhow::Result<()> {
 
     // Start HTTP server
     let shutdown_notify_task_for_http_task = shutdown_notify.clone();
-    let http_db_handle = db_handle.clone();
+    let _http_db_handle = db_handle.clone();
     let http_join_handle = http_server::start_http_server(
-        http_db_handle, 
+        // _http_db_handle, // commented out for now to wait for refactor
         store.clone(), 
         registry.clone(), 
         shutdown_notify_task_for_http_task
