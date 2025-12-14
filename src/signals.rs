@@ -1,4 +1,3 @@
-use tokio;
 use tokio::signal::unix::{signal, SignalKind};
 use std::sync::Arc;
 use crate::db;
