@@ -14,14 +14,14 @@ pub async fn run() -> anyhow::Result<()> {
     let store: Store = Arc::new(tokio::sync::RwLock::new(initial));
 
     let registry = Arc::new(Registry::new());
-    let mqtt_messages_received_counter = IntCounter::new("mqtt_messages_total", "Total MQTT messages received").unwrap();
-    let mqtt_messages_not_flushed_to_db = IntCounter::new("mqtt_unflushed_total", "Total unflushed MQTT messages in WAL").unwrap();
-    registry.register(Box::new(mqtt_messages_received_counter.clone())).ok();
-    registry.register(Box::new(mqtt_messages_not_flushed_to_db.clone())).ok();
+    let mqtt_messages_received_counter = IntCounter::new("mqtt_messages_total", "Total MQTT messages received")?;
+    let mqtt_messages_not_flushed_to_db = IntCounter::new("mqtt_unflushed_total", "Total unflushed MQTT messages in WAL")?;
+    registry.register(Box::new(mqtt_messages_received_counter.clone()))?;
+    registry.register(Box::new(mqtt_messages_not_flushed_to_db.clone()))?;
 
     // Start DB worker and pass handle into background tasks
     let db_path = std::env::var("DUCKDB_PATH").ok();
-    let (db_handle, db_join_handle) = db::start_db_worker(db_path);
+    let (db_handle, db_join_handle) = db::start_db_worker(db_path)?;
 
     // Start MQTT worker
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());

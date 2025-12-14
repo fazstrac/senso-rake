@@ -87,17 +87,19 @@ impl DbHandle {
 
 /// Start the DB worker thread which owns a DuckDB connection and executes jobs.
 /// If `path` is `Some`, opens that file, otherwise uses an in-memory DB.
-pub fn start_db_worker(path: Option<String>) -> (DbHandle, JoinHandle<()>) {
+pub fn start_db_worker(path: Option<String>) -> anyhow::Result<(DbHandle, JoinHandle<()>)> {
     let (tx, rx): (Sender<DbJob>, Receiver<DbJob>) = unbounded();
     let handle = DbHandle::new(tx.clone());
+
+    let conn = match path.as_deref() {
+        Some(p) => Connection::open(p).map_err(|e| anyhow::anyhow!("Failed to open DuckDB at path {}: {}", p, e)),
+        None => Connection::open_in_memory().map_err(|e| anyhow::anyhow!("Failed to open in-memory DuckDB: {}", e)),
+    }?;
 
     // Spawn a blocking thread that owns the DuckDB connection.
     // TODO: Handle connection errors more gracefully - currently panics on failure which is not OK
     let join = task::spawn_blocking(move || {
-        let conn = match path.as_deref() {
-            Some(p) => Connection::open(p).expect("open duckdb file"),
-            None => Connection::open_in_memory().expect("open in-memory duckdb"),
-        };
+
 
         while let Ok(job) = rx.recv() {
             match job.command {
@@ -136,7 +138,7 @@ pub fn start_db_worker(path: Option<String>) -> (DbHandle, JoinHandle<()>) {
         }
     });
 
-    (handle.clone(), join)
+    Ok((handle.clone(), join))
 }
 
 
