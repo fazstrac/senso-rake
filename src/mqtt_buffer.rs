@@ -21,16 +21,21 @@ struct RawMessage {
 
 #[derive(Debug)]
 enum MeasurementType {
+    Temperature = 0,
+    Humidity = 1,
+    Pressure = 2,
+    BatteryOk = 3,
+    ErrorOrUnknown = 255,    
 }
 
 impl MeasurementType {
     fn from_key(key: &str) -> u8 {
         match key {
-            "temperature_C" => 0,
-            "humidity" => 1,
-            "pressure_kPa" => 2,
-            "battery_ok" => 3,
-            _ => 255, // unknown
+            "temperature_C" => MeasurementType::Temperature as u8,
+            "humidity" => MeasurementType::Humidity as u8,
+            "pressure_kPa" => MeasurementType::Pressure as u8,
+            "battery_ok" => MeasurementType::BatteryOk as u8,
+            _ => MeasurementType::ErrorOrUnknown as u8,
         }
     }
 }
@@ -46,8 +51,26 @@ pub struct NormalizedRow {
     raw_json: Option<String>,
 }
 
+
+// Normalize one JSON message string into multiple NormalizedRow entries
+// On error, returns a single row with error info and raw JSON preserved
 pub fn normalize_one_message(json_str: &str) -> Vec<NormalizedRow> {
-    let raw: RawMessage = serde_json::from_str(json_str).unwrap();
+    let raw: RawMessage = match serde_json::from_str(json_str) {
+        Ok(r) => r,
+        Err(err) => {
+            eprintln!("Error parsing JSON message: {}", err);
+            // Return a special row with raw JSON preserved
+            return vec![NormalizedRow {
+                timestamp: 0, // or a sentinel
+                sensor_id: "null".to_string(),
+                model: "null".to_string(),
+                measurement_type: MeasurementType::ErrorOrUnknown as u8, // add an enum variant for error rows
+                value: f32::NAN, // sentinel value
+                raw_json: Some(json_str.to_string()), // keep the original string
+            }];
+        }
+    };
+
     let mut rows = Vec::new();
     let ts = parse_time(raw.measurements.get("time"));
 
@@ -230,5 +253,20 @@ mod tests {
 
         assert_eq!(batch.num_rows(), all_rows.len(), "record batch row count");
         assert_eq!(batch.num_columns(), 6, "record batch column count");
+    }
+
+    #[test]
+    fn test_normalize_misbehaving_json() {
+        // Provide malformed JSON and ensure normalize_one_message returns
+        // a single sentinel row preserving the original string.
+        let bad = "{ this is not valid json }";
+        let rows = normalize_one_message(bad);
+        assert_eq!(rows.len(), 1, "expected a single sentinel row for malformed JSON");
+        let r = &rows[0];
+        assert_eq!(r.raw_json.as_deref(), Some(bad));
+        assert_eq!(r.timestamp, 0);
+        assert_eq!(r.sensor_id, "null");
+        assert!(r.value.is_nan(), "expected sentinel NaN value for malformed input");
+        assert_eq!(r.measurement_type, MeasurementType::ErrorOrUnknown as u8, "expected sentinel measurement_type=255 for error rows");
     }
 }
