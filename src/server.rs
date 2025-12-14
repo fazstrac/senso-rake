@@ -1,15 +1,14 @@
 // `server.rs` composes the HTTP application: it loads initial state,
 // registers Prometheus metrics, starts the MQTT background task, and
 // mounts HTTP handlers and middleware.
-use crate::{handlers, mqtt, db, state::{load_mappings, Store}};
+use crate::{handlers, mqtt, db, signals, state::{load_mappings, Store}};
 use axum::{routing::{get, put}, Router, Extension};
 use prometheus::{Registry, IntCounter};
 use std::sync::Arc;
-use tokio::task;
+
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::http::{Request, Method, HeaderValue, StatusCode};
-use tokio::signal::unix::{signal, SignalKind};
 
 // TODO
 // - IDEA: reread config/mappings on SIGHUP?
@@ -31,7 +30,7 @@ pub async fn run() -> anyhow::Result<()> {
     // Start DB worker and pass handle into background tasks
     let mqtt_messages_not_flushed_to_db_handle = mqtt_messages_not_flushed_to_db.clone();
     let db_path = std::env::var("DUCKDB_PATH").ok();
-    let (db_handle, _db_join) = db::start_db_worker(db_path, mqtt_messages_not_flushed_to_db_handle);
+    let (db_handle, db_join_handle) = db::start_db_worker(db_path, mqtt_messages_not_flushed_to_db_handle);
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let shutdown_notify_task = shutdown_notify.clone();
@@ -42,72 +41,27 @@ pub async fn run() -> anyhow::Result<()> {
     let mqtt_messages_received_counter_task = mqtt_messages_received_counter.clone();
     let mqtt_messages_not_flushed_to_db_task = mqtt_messages_not_flushed_to_db.clone();
     let db_for_task = db_handle.clone();
-    let mqtt_join = mqtt::start_mqtt_worker(
+    let mqtt_join_handle = mqtt::start_mqtt_worker(
         mqtt_messages_received_counter_task, 
         mqtt_messages_not_flushed_to_db_task, 
         db_for_task, 
         shutdown_notify_task
     ).await.unwrap();
 
+
     // Spawn a task to handle Unix signals for graceful shutdown
     let shutdown_notify_task2 = shutdown_notify.clone();
-    let signal_task = task::spawn(async move {
-        let mut sighup = signal(SignalKind::hangup()).unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        let mut sigint = signal(SignalKind::interrupt()).unwrap();
 
-        let handle_shutdown = async |signal_name: String| {
-            println!("Received {}, shutting down...", signal_name);
-            // Notify MQTT task to shut down. It will flush and shut down the DB.
-            shutdown_notify_task2.notify_waiters();
+    let db_handle_for_signal_task = db_handle.clone();
 
-            println!("Waiting for MQTT task and DB thread to finish...");
+    let _signal_handler = signals::start_signal_handler(
+        shutdown_notify_task2,
+        mqtt_join_handle,
+        db_handle_for_signal_task,
+        db_join_handle,
+    ).await;
 
-            // REFACTOR: refactor http handlers and mqtt task to share db handle properly
-            // also refactor http handler into its own module and create start_http_server function
-
-            // Await MQTT task completion
-            mqtt_join.await.unwrap_or_else(|e| {
-                eprintln!("Error joining MQTT task on shutdown: {}", e);
-            });
-
-            db_handle.shutdown().await.unwrap_or_else(|e| {
-                eprintln!("Error shutting down DB on shutdown: {}", e);
-            });
-
-            // Join DB thread
-            _db_join.await.unwrap_or_else(|e| {
-                eprintln!("Error joining DB thread on shutdown: {:?}", e);
-            });
-
-            println!("Shutdown complete.");            
-        };
-
-        // Handle signals for SIGHUP (checkpoint), SIGINT and SIGTERM (graceful shutdown)
-        // Ugly and should be refactored to reduce duplication
-        // As it is now, does affect 
-        loop {
-            tokio::select! {
-                _ = sighup.recv() => {
-                    println!("Received SIGHUP, CHECKPOINTING database...");
-
-                    db_handle.flush().await.unwrap_or_else(|e| {
-                        eprintln!("Error flushing DB on SIGHUP: {}", e);
-                    });
-                }
-                _ = sigint.recv() => {
-                    handle_shutdown("SIGINT".to_string()).await;
-                    break;
-                },
-                _ = sigterm.recv() => {
-                    handle_shutdown("SIGTERM".to_string()).await;
-                    break;
-                }
-            }
-        }
-
-        println!("Signal handling task exiting cleanly.");
-    });
+    let http_db_handle = db_handle.clone();
 
     // Build the HTTP app. Layers are applied from bottom -> top: the
     // `Extension` layers provide shared state (Store and Registry) to
@@ -120,7 +74,7 @@ pub async fn run() -> anyhow::Result<()> {
         .fallback_service(get(handlers::spa_handler))
         .layer(Extension(store))
         .layer(Extension(registry))
-        //.layer(Extension(db_handle))
+        .layer(Extension(http_db_handle))
         .layer(middleware::from_fn(cors_middleware));
 
     let bind_addr = "0.0.0.0:3000";
@@ -138,7 +92,7 @@ pub async fn run() -> anyhow::Result<()> {
     };
 
     server.with_graceful_shutdown(shutdown_future).await?;
-    signal_task.await.unwrap();
+    // signal_task.await.unwrap();
 
     Ok(())
 }

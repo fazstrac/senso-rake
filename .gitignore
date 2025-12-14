@@ -5,3 +5,4 @@ node_modules/
 .env
 mappings.json
 *.db*
+setup_env.sh
