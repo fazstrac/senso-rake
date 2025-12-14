@@ -20,9 +20,8 @@ pub async fn run() -> anyhow::Result<()> {
     registry.register(Box::new(mqtt_messages_not_flushed_to_db.clone())).ok();
 
     // Start DB worker and pass handle into background tasks
-    let mqtt_messages_not_flushed_to_db_handle = mqtt_messages_not_flushed_to_db.clone();
     let db_path = std::env::var("DUCKDB_PATH").ok();
-    let (db_handle, db_join_handle) = db::start_db_worker(db_path, mqtt_messages_not_flushed_to_db_handle);
+    let (db_handle, db_join_handle) = db::start_db_worker(db_path);
 
     // Start MQTT worker
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());

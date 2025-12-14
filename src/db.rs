@@ -7,8 +7,6 @@ use tokio::task;
 use tokio::task::JoinHandle;
 use duckdb::Connection;
 use anyhow::Result;
-use prometheus::IntCounter;
-
 
 pub enum DbCommand {
     Query(String),
@@ -89,7 +87,7 @@ impl DbHandle {
 
 /// Start the DB worker thread which owns a DuckDB connection and executes jobs.
 /// If `path` is `Some`, opens that file, otherwise uses an in-memory DB.
-pub fn start_db_worker(path: Option<String>, mqtt_messages_not_flushed_to_db: IntCounter) -> (DbHandle, JoinHandle<()>) {
+pub fn start_db_worker(path: Option<String>) -> (DbHandle, JoinHandle<()>) {
     let (tx, rx): (Sender<DbJob>, Receiver<DbJob>) = unbounded();
     let handle = DbHandle::new(tx.clone());
 
@@ -126,7 +124,6 @@ pub fn start_db_worker(path: Option<String>, mqtt_messages_not_flushed_to_db: In
                     let res = conn.execute("CHECKPOINT", []);
                     let _ = job.response.send(res.map(|_| DbResponse::FlushResult).map_err(|e| anyhow::anyhow!(e)));
                     // Reset the unflushed messages counter after a successful flush
-                    mqtt_messages_not_flushed_to_db.reset();
                 }
                 DbCommand::Shutdown => {
                     // Perform any necessary cleanup here
