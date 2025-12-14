@@ -9,7 +9,7 @@
 FROM rust:1.91-bullseye AS builder
 
 ARG BUILD_DATE
-ARG DUCKDB_VERSION
+ARG DUCKDB_VERSION=v1.4.2
 LABEL org.opencontainers.image.created=$BUILD_DATE
 
 # Install common system build dependencies (adjust if your deps require others)

@@ -153,13 +153,13 @@ pub async fn start_mqtt_worker(
                                             Ok(_) => {
                                                 println!("Flushed {} rows to DuckDB", all_rows.len());
                                                 all_rows.clear();
+                                                counter_unflushed_msg.reset();
                                             }
                                             Err(e) => eprintln!("Error flushing to DuckDB: {}", e),
                                         }
                                     }
                                     Err(e) => eprintln!("Error creating Arrow batch: {}", e),
-                                }
-                                counter_unflushed_msg.reset();
+                                }                                
                             }
                         }
                         Ok(Event::Incoming(i)) => {
