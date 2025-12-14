@@ -5,10 +5,6 @@ use crate::{http_server, mqtt, db, signals, state::{load_mappings, Store}};
 use prometheus::{Registry, IntCounter};
 use std::sync::Arc;
 
-// TODO
-// [ ] reread config/mappings on SIGHUP?
-// [x] Centralized database handler shared between MQTT task and HTTP handlers
-// [ ] Persist mappings to database
 pub async fn run() -> anyhow::Result<()> {
     let initial = load_mappings().await.unwrap_or_default();
     let store: Store = Arc::new(tokio::sync::RwLock::new(initial));
