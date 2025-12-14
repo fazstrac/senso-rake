@@ -6,10 +6,9 @@ use prometheus::{Registry, IntCounter};
 use std::sync::Arc;
 
 // TODO
-// - IDEA: reread config/mappings on SIGHUP?
-// - Centralized database handler shared between MQTT task and HTTP handlers
-// - Persist mappings to database
-
+// [ ] reread config/mappings on SIGHUP?
+// [x] Centralized database handler shared between MQTT task and HTTP handlers
+// [ ] Persist mappings to database
 pub async fn run() -> anyhow::Result<()> {
     let initial = load_mappings().await.unwrap_or_default();
     let store: Store = Arc::new(tokio::sync::RwLock::new(initial));
@@ -47,7 +46,6 @@ pub async fn run() -> anyhow::Result<()> {
         registry.clone(), 
         shutdown_notify_task3
     ).await.unwrap();
-
 
     // Spawn a task to handle Unix signals for graceful shutdown
     let shutdown_notify_task2 = shutdown_notify.clone();
