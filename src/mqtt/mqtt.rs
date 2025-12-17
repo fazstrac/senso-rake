@@ -22,7 +22,7 @@ pub struct MqttService {
     counter_tot_msg: IntCounter,
     counter_unflushed_msg: IntCounter,
     db: DbHandle,
-    shutdown_notify: Arc<Notify>,    
+    shutdown_notify: Arc<Notify>, // This should be replaced with a shutdown token
 }
 
 #[async_trait::async_trait]
