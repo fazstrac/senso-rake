@@ -3,12 +3,12 @@
 // `server`, `state`, `handlers`, and `mqtt` modules under `src/` so each
 // responsibility is isolated and easier to navigate / test.
 mod state;
-mod http_server;
+mod http;
 mod mqtt;
-mod mqtt_buffer;
-mod db;
-mod server;
+mod database;
+mod service;
 mod signals;
+mod server;
 
 /// Start the service. Keep `main` minimal so hot-reloads, tests, and
 /// integration points can import `server::run()` directly if needed.

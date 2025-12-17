@@ -1,4 +1,5 @@
 // Database interaction module
+use crate::service::Service;
 
 use duckdb::arrow::record_batch::RecordBatch;
 use crossbeam_channel::{unbounded, Sender, Receiver};
@@ -7,6 +8,40 @@ use tokio::task;
 use tokio::task::JoinHandle;
 use duckdb::Connection;
 use anyhow::Result;
+
+pub struct DbService {
+    db_path: Option<String>,
+    db_handle: DbHandle,
+    rx: Receiver<DbJob>,
+    // This should have a shutdown token
+}
+
+impl DbService {
+    pub fn new(db_path: Option<String>) -> anyhow::Result<Self> {
+        let (tx, rx): (Sender<DbJob>, Receiver<DbJob>) = unbounded();
+        let handle = DbHandle::new(tx); 
+        Ok(Self { db_path, db_handle: handle, rx })
+    }
+
+    pub fn get_handle(&self) -> DbHandle {
+        self.db_handle.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Service for DbService {
+    async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        let db_join_handle = start_db_worker(self.db_path.clone(), self.rx.clone())?;
+
+        Ok(db_join_handle) 
+    }
+
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        self.db_handle.shutdown().await?;
+        Ok(())
+    }
+}
+
 
 pub enum DbCommand {
     Query(String),
@@ -85,12 +120,9 @@ impl DbHandle {
     }
 }
 
-/// Start the DB worker thread which owns a DuckDB connection and executes jobs.
-/// If `path` is `Some`, opens that file, otherwise uses an in-memory DB.
-pub fn start_db_worker(path: Option<String>) -> anyhow::Result<(DbHandle, JoinHandle<()>)> {
-    let (tx, rx): (Sender<DbJob>, Receiver<DbJob>) = unbounded();
-    let handle = DbHandle::new(tx.clone());
-
+// Start the DB worker thread which owns a DuckDB connection and executes jobs.
+// If `path` is `Some`, opens that file, otherwise uses an in-memory DB.
+pub fn start_db_worker(path: Option<String>, rx: Receiver<DbJob>) -> anyhow::Result<JoinHandle<()>> {
     let conn = match path.as_deref() {
         Some(p) => Connection::open(p).map_err(|e| anyhow::anyhow!("Failed to open DuckDB at path {}: {}", p, e)),
         None => Connection::open_in_memory().map_err(|e| anyhow::anyhow!("Failed to open in-memory DuckDB: {}", e)),
@@ -136,7 +168,7 @@ pub fn start_db_worker(path: Option<String>) -> anyhow::Result<(DbHandle, JoinHa
         }
     });
 
-    Ok((handle.clone(), join))
+    Ok(join)
 }
 
 

@@ -19,6 +19,7 @@ chrono = { version = "0.4", features = ["serde"] }
 arrow = "57.1.0"
 crossbeam-channel = "0.5.15"
 tower = "0.5.2"
+async-trait = "0.1.89"
 
 [profile.dev]
 opt-level = 0

@@ -3,18 +3,46 @@
 // we increment the provided `IntCounter` and print the event. In a real
 // implementation you'd persist raw messages to DuckDB/DuckLake and perform
 // structured parsing/validation.
+use crate::service::Service;
+
 use prometheus::IntCounter;
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
 use tokio::time::{self, Duration};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-use crate::mqtt_buffer;
+use crate::mqtt::mqtt_buffer;
 
 /// Start a long-running MQTT loop. This function never returns unless an
 /// unrecoverable error occurs. It is intended to be spawned with
 /// `tokio::task::spawn` from `server::run()` so it runs in the background.
-use crate::db::DbHandle;
+use crate::database::DbHandle;
+
+pub struct MqttService {
+    counter_tot_msg: IntCounter,
+    counter_unflushed_msg: IntCounter,
+    db: DbHandle,
+    shutdown_notify: Arc<Notify>,    
+}
+
+#[async_trait::async_trait]
+impl Service for MqttService {
+    async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        let join_handle = start_mqtt_worker(
+            self.counter_tot_msg.clone(), 
+            self.counter_unflushed_msg.clone(),
+            self.db.clone(),
+            self.shutdown_notify.clone(),
+        ).await;
+        join_handle
+    }
+
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        self.shutdown_notify.notify_waiters();
+        Ok(())
+    }
+}
+
 
 pub async fn start_mqtt_worker(
     counter_tot_msg: IntCounter, 

@@ -1,7 +1,7 @@
 // `server.rs` composes the HTTP application: it loads initial state,
 // registers Prometheus metrics, starts the MQTT background task, and
 // mounts HTTP handlers and middleware.
-use crate::{http_server, mqtt, db, signals, state::{load_mappings, Store}};
+use crate::{http, mqtt, database, signals, service::Service, state::{load_mappings, Store}};
 use prometheus::{Registry, IntCounter};
 use std::sync::Arc;
 
@@ -17,7 +17,11 @@ pub async fn run() -> anyhow::Result<()> {
 
     // Start DB worker and pass handle into background tasks
     let db_path = std::env::var("DUCKDB_PATH").ok();
-    let (db_handle, db_join_handle) = db::start_db_worker(db_path)?;
+    let db_svc = Arc::new(database::DbService::new(db_path)?);
+    let db_handle = db_svc.get_handle();
+
+    let svc: Arc<dyn Service> = db_svc;
+    let db_join_handle = svc.start().await?;
 
     // Start MQTT worker
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());

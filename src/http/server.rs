@@ -1,5 +1,7 @@
 // HTTP handlers for the service. This module sets up the Axum
 // router with routes, handlers, and middleware.
+use crate::service::Service;
+
 use crate::{state::{key_for, save_mappings, Mapping, Store}};
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
@@ -12,6 +14,33 @@ use axum::http::header::CONTENT_TYPE;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, put};
+
+
+pub struct HttpService {
+    // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
+    store: Store,
+    registry: Arc<Registry>,
+    shutdown_notify: Arc<tokio::sync::Notify>, // This should be replaced with a shutdown token
+}
+
+#[async_trait::async_trait]
+impl Service for HttpService {
+    async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        let join_handle = start_http_server(
+            // self.http_db_handle.clone(), // commented out for now to wait for refactor
+            self.store.clone(),
+            self.registry.clone(),
+            self.shutdown_notify.clone(),
+        ).await;
+
+        join_handle
+    }
+
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        self.shutdown_notify.notify_waiters();
+        Ok(())
+    }
+}
 
 
 pub async fn start_http_server(
