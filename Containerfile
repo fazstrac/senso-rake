@@ -51,7 +51,7 @@ RUN useradd -m -u 1000 appuser || true
 # Adjust the binary name if your crate outputs a different filename.
 COPY --from=builder /scratch/libduckdb.so /usr/local/lib/libduckdb.so
 COPY --from=builder /usr/src/app/target/release/rust-to-mqtt-prometheus-exporter /usr/local/bin/rust-exporter
-RUN ldconfig && chown appuser:appuser /usr/local/bin/rust-exporter
+RUN ldconfig
 
 USER appuser
 WORKDIR /data
