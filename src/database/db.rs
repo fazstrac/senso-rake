@@ -1,5 +1,5 @@
 // Database interaction module
-use crate::service::Service;
+use crate::service::{Service, ServiceType};
 
 use duckdb::arrow::record_batch::RecordBatch;
 use crossbeam_channel::{unbounded, Sender, Receiver};
@@ -30,6 +30,10 @@ impl DbService {
 
 #[async_trait::async_trait]
 impl Service for DbService {
+    fn svc(&self) -> ServiceType {
+        ServiceType::Sink
+    }
+
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         let db_join_handle = start_db_worker(self.db_path.clone(), self.rx.clone(), self.shutdown_rx.clone())?;
 

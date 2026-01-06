@@ -19,8 +19,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let shutdown_token = shutdown_token::ShutdownToken::new();
 
-    let mut phase1_services: Vec<Box<dyn Service>> = vec![];
-    let mut phase2_services: Vec<Box<dyn Service>> = vec![];
+    let mut services: Vec<Box<dyn Service>> = vec![];
 
     // Build DB service
     let db_path = std::env::var("DUCKDB_PATH").ok();
@@ -29,7 +28,7 @@ pub async fn run() -> anyhow::Result<()> {
     let db_svc = database::DbService::new(db_path, db_shutdown_rx)?;
     let db_handle = db_svc.get_handle();
     
-    phase2_services.push(Box::new(db_svc));
+    services.push(Box::new(db_svc));
 
     // Build MQTT service
     let mqtt_service = mqtt::MqttService::new(
@@ -39,7 +38,7 @@ pub async fn run() -> anyhow::Result<()> {
         shutdown_token.clone(),
     );
 
-    phase1_services.push(Box::new(mqtt_service));
+    services.push(Box::new(mqtt_service));
 
     // Build HTTP service
     let http_service = http::HttpService::new(
@@ -48,21 +47,26 @@ pub async fn run() -> anyhow::Result<()> {
         shutdown_token.clone(),
     );
 
-    phase1_services.push(Box::new(http_service));
+    services.push(Box::new(http_service));
 
-    let mut orchestrator = Orchestrator::new(phase1_services, phase2_services, shutdown_token, db_shutdown_tx);
+    let mut orchestrator = Orchestrator::new(services, shutdown_token, db_shutdown_tx);
 
     orchestrator.start_all().await?;
 
     tokio::spawn(async move {
         // let mut sighup = signal(SignalKind::hangup()).unwrap();
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        // let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
 
         loop {
             tokio::select! {
                 _ = sigterm.recv() => {
                     println!("Received SIGTERM, initiating shutdown...");
+                    
+                    break;
+                }
+                _ = sigint.recv() => {
+                    println!("Received SIGINT, initiating shutdown...");
                     
                     break;
                 }

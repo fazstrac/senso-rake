@@ -1,6 +1,6 @@
 // HTTP handlers for the service. This module sets up the Axum
 // router with routes, handlers, and middleware.
-use crate::service::Service;
+use crate::service::{Service, ServiceType};
 use crate::state::{key_for, Mapping};
 use crate::shutdown_token::ShutdownToken;
 
@@ -39,6 +39,10 @@ impl HttpService {
 
 #[async_trait::async_trait]
 impl Service for HttpService {
+    fn svc(&self) -> ServiceType {
+        ServiceType::Source
+    }
+
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         let join_handle = start_http_server(
             // self.http_db_handle.clone(), // commented out for now to wait for refactor

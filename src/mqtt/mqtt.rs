@@ -3,7 +3,7 @@
 // we increment the provided `IntCounter` and print the event. In a real
 // implementation you'd persist raw messages to DuckDB/DuckLake and perform
 // structured parsing/validation.
-use crate::service::Service;
+use crate::service::{Service, ServiceType};
 use crate::shutdown_token::ShutdownToken;
 
 use prometheus::IntCounter;
@@ -42,6 +42,10 @@ impl MqttService {
 
 #[async_trait::async_trait]
 impl Service for MqttService {
+    fn svc(&self) -> ServiceType {
+        ServiceType::Source
+    }
+
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         let join_handle = start_mqtt_worker(
             self.counter_tot_msg.clone(), 
@@ -141,12 +145,13 @@ pub async fn start_mqtt_worker(
     // Ensure table exists via DB worker
     let create_table_sql = format!(
         "CREATE TABLE IF NOT EXISTS measurements (
+            ulid VARCHAR,
             timestamp TIMESTAMP,
             model VARCHAR,
             sensor_id VARCHAR,
             measurement_type INTEGER,
             value DOUBLE,
-            raw_json VARCHAR
+            raw_json JSON
         )"
     );
 
