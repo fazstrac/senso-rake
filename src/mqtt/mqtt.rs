@@ -4,12 +4,11 @@
 // implementation you'd persist raw messages to DuckDB/DuckLake and perform
 // structured parsing/validation.
 use crate::service::Service;
+use crate::shutdown_token::ShutdownToken;
 
 use prometheus::IntCounter;
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
 use tokio::time::{self, Duration};
-use std::sync::Arc;
-use tokio::sync::Notify;
 
 use crate::mqtt::mqtt_buffer;
 
@@ -22,7 +21,23 @@ pub struct MqttService {
     counter_tot_msg: IntCounter,
     counter_unflushed_msg: IntCounter,
     db: DbHandle,
-    shutdown_notify: Arc<Notify>, // This should be replaced with a shutdown token
+    shutdown_token: ShutdownToken,  
+}
+
+impl MqttService {
+    pub fn new(
+        counter_tot_msg: IntCounter,
+        counter_unflushed_msg: IntCounter,
+        db: DbHandle,
+        shutdown_token: ShutdownToken,
+    ) -> Self {
+        MqttService {
+            counter_tot_msg,
+            counter_unflushed_msg,
+            db,
+            shutdown_token,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -32,14 +47,9 @@ impl Service for MqttService {
             self.counter_tot_msg.clone(), 
             self.counter_unflushed_msg.clone(),
             self.db.clone(),
-            self.shutdown_notify.clone(),
+            self.shutdown_token.clone(),
         ).await;
         join_handle
-    }
-
-    async fn shutdown(&self) -> anyhow::Result<()> {
-        self.shutdown_notify.notify_waiters();
-        Ok(())
     }
 }
 
@@ -48,7 +58,7 @@ pub async fn start_mqtt_worker(
     counter_tot_msg: IntCounter, 
     counter_unflushed_msg: IntCounter,
     db: DbHandle,
-    shutdown: Arc<Notify>,
+    shutdown_token: ShutdownToken,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     // Create MQTT options from environment variables. Check for host,
     // port, username, and password; use defaults if not provided.
@@ -144,9 +154,8 @@ pub async fn start_mqtt_worker(
             anyhow::anyhow!("Error creating measurements table in DuckDB: {}", e)
     })?;
     
-    // Timer for periodic flush and checkpoint
-    // Use prime numbers to avoid alignment with other periodic tasks
-    let mut interval_flush = time::interval(Duration::from_secs(293));
+    // Timer for periodic flush and checkpoint    
+    let mut interval_flush = time::interval(Duration::from_secs(600));
 
     let join_handle = tokio::task::spawn(async move {        
         loop {
@@ -222,8 +231,10 @@ pub async fn start_mqtt_worker(
                     }
                 }
                 // Shutdown signal
-                _ = shutdown.notified() => {
+                _ = shutdown_token.wait() => {
                     // Perform final flush before exiting
+                    println!("MQTT loop received shutdown signal, exiting.");
+
                     if !all_rows.is_empty() {
                         match mqtt_buffer::create_arrow_record_batch(&all_rows) {
                             Ok(batch) => match db.insert_batch(batch, "measurements").await {
@@ -237,7 +248,8 @@ pub async fn start_mqtt_worker(
                             Err(e) => eprintln!("Error creating Arrow batch during shutdown: {}", e),
                         }
                     }
-                    println!("MQTT loop received shutdown signal, exiting.");
+
+                    println!("Final MQTT loop cleanup done, exiting.");
                     break;
                 }
             }

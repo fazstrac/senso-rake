@@ -13,14 +13,14 @@ pub struct DbService {
     db_path: Option<String>,
     db_handle: DbHandle,
     rx: Receiver<DbJob>,
-    // This should have a shutdown token
+    shutdown_rx: Receiver<()>,
 }
 
 impl DbService {
-    pub fn new(db_path: Option<String>) -> anyhow::Result<Self> {
+    pub fn new(db_path: Option<String>, shutdown_rx: Receiver<()>) -> anyhow::Result<Self> {
         let (tx, rx): (Sender<DbJob>, Receiver<DbJob>) = unbounded();
-        let handle = DbHandle::new(tx); 
-        Ok(Self { db_path, db_handle: handle, rx })
+        let handle = DbHandle::new(tx);
+        Ok(Self { db_path, db_handle: handle, rx, shutdown_rx })
     }
 
     pub fn get_handle(&self) -> DbHandle {
@@ -31,14 +31,9 @@ impl DbService {
 #[async_trait::async_trait]
 impl Service for DbService {
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-        let db_join_handle = start_db_worker(self.db_path.clone(), self.rx.clone())?;
+        let db_join_handle = start_db_worker(self.db_path.clone(), self.rx.clone(), self.shutdown_rx.clone())?;
 
         Ok(db_join_handle) 
-    }
-
-    async fn shutdown(&self) -> anyhow::Result<()> {
-        self.db_handle.shutdown().await?;
-        Ok(())
     }
 }
 
@@ -47,7 +42,6 @@ pub enum DbCommand {
     Query(String),
     InsertBatch(RecordBatch, String),
     Flush,
-    Shutdown
 }
 
 struct DbJob {
@@ -59,7 +53,6 @@ pub enum DbResponse {
     QueryResult,
     InsertResult,
     FlushResult,
-    ShutdownResult,
 }
 
 #[derive(Clone)]
@@ -104,25 +97,16 @@ impl DbHandle {
         rx.await.map_err(|e| anyhow::anyhow!("DB job response error: {}", e))??;
         Ok(())
     }
-
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
-        let (tx, rx) = oneshot::channel();
-        let job = DbJob {
-            command: DbCommand::Shutdown,
-            response: tx,
-        };
-        self.tx.send(job).map_err(|e| anyhow::anyhow!("DB job send error: {}", e))?;
-        
-        match rx.await.map_err(|e| anyhow::anyhow!("DB job response error: {}", e))?? {
-            DbResponse::ShutdownResult => Ok(()),
-            _ => Ok(()),
-        }
-    }
 }
 
 // Start the DB worker thread which owns a DuckDB connection and executes jobs.
 // If `path` is `Some`, opens that file, otherwise uses an in-memory DB.
-pub fn start_db_worker(path: Option<String>, rx: Receiver<DbJob>) -> anyhow::Result<JoinHandle<()>> {
+// Params:
+// - path: Option<String> - Path to DuckDB file or None for in-memory
+// - rx: Receiver<DbJob> - Channel receiver for DB jobs
+// - shutdown_rx: Receiver<()> - Channel receiver for shutdown signal
+// Returns: JoinHandle<()> - Handle to the spawned DB worker thread
+fn start_db_worker(path: Option<String>, rx: Receiver<DbJob>, shutdown_rx: Receiver<()>) -> anyhow::Result<JoinHandle<()>> {
     let conn = match path.as_deref() {
         Some(p) => Connection::open(p).map_err(|e| anyhow::anyhow!("Failed to open DuckDB at path {}: {}", p, e)),
         None => Connection::open_in_memory().map_err(|e| anyhow::anyhow!("Failed to open in-memory DuckDB: {}", e)),
@@ -131,44 +115,73 @@ pub fn start_db_worker(path: Option<String>, rx: Receiver<DbJob>) -> anyhow::Res
     // Spawn a blocking thread that owns the DuckDB connection.
     // TODO: Handle connection errors more gracefully - currently panics on failure which is not OK
     let join = task::spawn_blocking(move || {
-        while let Ok(job) = rx.recv() {
-            match job.command {
-                DbCommand::InsertBatch(batch, table) => {
-                    let res: Result<()> = (|| {
-                        // Whitelist allowed table names to prevent SQL injection
-                        match table.as_str() {
-                            "measurements" => {
-                                let mut appender = conn.appender(&table)?;
-                                appender.append_record_batch(batch)?;
-                                appender.flush()?;
-                                Ok(())
-                            }
-                            _ => Err(anyhow::anyhow!("Invalid table name")),
+        loop {
+            crossbeam_channel::select! {
+                recv(rx) -> job => {
+                    let job = match job {
+                        Ok(j) => j,
+                        Err(_) => {
+                            println!("DB worker channel closed, exiting.");
+                            // All senders have been dropped, close the connection and exit the loop
+                            // Channel closed, exit the loop
+                            break;
                         }
-                    })();
-                    let _ = job.response.send(res.map(|_| DbResponse::InsertResult));
+                    };
+                    
+                    handle_db_job(job, &conn).map_err(|e| {
+                        println!("Error handling DB job: {}", e);
+                    }).ok();
                 }
-                DbCommand::Query(sql) => {
-                    let res = conn.execute(&sql, []);
-                    let _ = job.response.send(res.map(|_| DbResponse::QueryResult).map_err(|e| anyhow::anyhow!(e)));
-                }
-                DbCommand::Flush => {
-                    let res = conn.execute("CHECKPOINT", []);
-                    let _ = job.response.send(res.map(|_| DbResponse::FlushResult).map_err(|e| anyhow::anyhow!(e)));
-                    // Reset the unflushed messages counter after a successful flush
-                }
-                DbCommand::Shutdown => {
-                    // Perform any necessary cleanup here
-                    // This skips retrying on close errors - ugly                
-                    let res = conn.close();
-                    let _ = job.response.send(res.map(|_| DbResponse::ShutdownResult).map_err(|e| anyhow::anyhow!(e.1)));
-                    break; // Exit the loop to terminate the thread
-                }
+
+                recv(shutdown_rx) -> _ => {
+                    println!("DB worker received shutdown signal.");
+                    // Shutdown signal received, exit the loop
+                    break;
+                }   
             }
-        }
+        };
+
+        conn.execute("CHECKPOINT", []).map_err(|e| {
+            println!("Error in checkpointing {}", e);
+        }).ok();
+
+        conn.close().map_err(|e| {
+            println!("Error closing DuckDB connection: {}", e.1);
+        }).ok();
     });
 
     Ok(join)
+}
+
+
+fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
+    match job.command {
+        DbCommand::InsertBatch(batch, table) => {
+            let res: Result<()> = (|| {
+                // Whitelist allowed table names to prevent SQL injection
+                match table.as_str() {
+                    "measurements" => {
+                        let mut appender = conn.appender(&table)?;
+                        appender.append_record_batch(batch)?;
+                        appender.flush()?;
+                        Ok(())
+                    }
+                    _ => Err(anyhow::anyhow!("Invalid table name")),
+                }
+            })();
+            let _ = job.response.send(res.map(|_| DbResponse::InsertResult));
+        }
+        DbCommand::Query(sql) => {
+            let res = conn.execute(&sql, []);
+            let _ = job.response.send(res.map(|_| DbResponse::QueryResult).map_err(|e| anyhow::anyhow!(e)));
+        }
+        DbCommand::Flush => {
+            let res = conn.execute("CHECKPOINT", []);
+            let _ = job.response.send(res.map(|_| DbResponse::FlushResult).map_err(|e| anyhow::anyhow!(e)));
+            // Reset the unflushed messages counter after a successful flush
+        }
+    }
+    Ok(())
 }
 
 

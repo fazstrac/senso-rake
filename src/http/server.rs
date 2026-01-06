@@ -1,8 +1,9 @@
 // HTTP handlers for the service. This module sets up the Axum
 // router with routes, handlers, and middleware.
 use crate::service::Service;
+use crate::state::{key_for, Mapping};
+use crate::shutdown_token::ShutdownToken;
 
-use crate::{state::{key_for, save_mappings, Mapping, Store}};
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
 
@@ -18,9 +19,22 @@ use axum::routing::{get, put};
 
 pub struct HttpService {
     // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
-    store: Store,
     registry: Arc<Registry>,
-    shutdown_notify: Arc<tokio::sync::Notify>, // This should be replaced with a shutdown token
+    shutdown_token: ShutdownToken, // This should be replaced with a shutdown token
+}
+
+impl HttpService {
+    pub fn new(
+        // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
+        registry: Arc<Registry>,
+        shutdown_token: ShutdownToken,
+    ) -> Self {
+        Self {
+            // http_db_handle,
+            registry,
+            shutdown_token,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -28,29 +42,22 @@ impl Service for HttpService {
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         let join_handle = start_http_server(
             // self.http_db_handle.clone(), // commented out for now to wait for refactor
-            self.store.clone(),
             self.registry.clone(),
-            self.shutdown_notify.clone(),
+            self.shutdown_token.clone(),
         ).await;
 
         join_handle
-    }
-
-    async fn shutdown(&self) -> anyhow::Result<()> {
-        self.shutdown_notify.notify_waiters();
-        Ok(())
     }
 }
 
 
 pub async fn start_http_server(
-    // http_db_handle: db::DbHandle, // commented out for now wait for refactor
-    store: Store,
+    // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
     registry: Arc<Registry>,
-    shutdown_notify: Arc<tokio::sync::Notify>,
+    shutdown_token: ShutdownToken,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
 
-    let app = build_router(store, registry);
+    let app = build_router(registry);
 
     let bind_addr = "0.0.0.0:3000";
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -62,7 +69,7 @@ pub async fn start_http_server(
 
         let shutdown_future = {
             async move {
-                shutdown_notify.notified().await;
+                shutdown_token.wait().await;
                 println!("HTTP server shutdown signal received.");
             }
         };
@@ -77,7 +84,6 @@ pub async fn start_http_server(
 // This is separate function for testability.
 fn build_router(
     // http_db_handle: db::DbHandle, 
-    store: Store, 
     registry: Arc<Registry>
 ) -> Router {
     Router::new()
@@ -85,7 +91,6 @@ fn build_router(
         .route("/metrics", get(metrics_handler))
         .route("/health", get(|| async { StatusCode::OK }))
         .fallback(spa_handler)
-        .layer(Extension(store))
         .layer(Extension(registry))
         // .layer(Extension(http_db_handle)) // commented out for now to wait for refactor
         .layer(middleware::from_fn(cors_middleware))
@@ -94,8 +99,16 @@ fn build_router(
 
 /// Return all mappings as JSON array. This performs a read-lock and clones the
 /// values so the handler does not keep the lock across await points.
-async fn list_mappings(Extension(store): Extension<Store>) -> Json<Vec<Mapping>> {
-    let map = store.read().await;
+async fn list_mappings() -> Json<Vec<Mapping>> {
+    // return a static mapping for now
+    let mapping = Mapping {
+        sensor_id: "sensor123".to_string(),
+        manufacturer: "AcmeCorp".to_string(),
+        name: "Temperature Sensor".to_string(),
+    };
+    let mut map = std::collections::HashMap::new();
+    map.insert(key_for(&mapping.sensor_id, &mapping.manufacturer), mapping);
+
     let vec = map.values().cloned().collect();
     Json(vec)
 }
@@ -103,15 +116,7 @@ async fn list_mappings(Extension(store): Extension<Store>) -> Json<Vec<Mapping>>
 /// Insert or update a mapping. Expects a JSON body matching `Mapping`.
 /// Returns `201 Created` on success. In a production service you'd validate
 /// fields and possibly return `400 Bad Request` for invalid payloads.
-async fn put_mapping(Extension(store): Extension<Store>, Json(payload): Json<Mapping>) -> Result<StatusCode, (StatusCode, String)> {
-    let key = key_for(&payload.sensor_id, &payload.manufacturer);
-    {
-        let mut map = store.write().await;
-        map.insert(key, payload);
-    }
-    // Persist immediately for this simple example. Consider batching in
-    // high-throughput scenarios or moving persistence to a DB.
-    save_mappings(&store).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+async fn put_mapping(Json(_payload): Json<Mapping>) -> Result<StatusCode, (StatusCode, String)> {
     Ok(StatusCode::CREATED)
 }
 
@@ -201,11 +206,10 @@ mod tests {
     use tower::util::ServiceExt; // for `oneshot` method
 
     fn build_test_app() -> Router {
-        let store = Store::default();
         let registry = Arc::new(Registry::new());
         // let db: db::DbHandle;
 
-        build_router(store, registry)
+        build_router(registry)
     }
 
     #[tokio::test]

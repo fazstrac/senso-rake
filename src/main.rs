@@ -7,8 +7,9 @@ mod http;
 mod mqtt;
 mod database;
 mod service;
-mod signals;
 mod server;
+mod shutdown_token;
+mod orchestrator;
 
 /// Start the service. Keep `main` minimal so hot-reloads, tests, and
 /// integration points can import `server::run()` directly if needed.
