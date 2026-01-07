@@ -140,17 +140,13 @@ pub async fn start_mqtt_worker(
         }
     }
 
-    let mut all_rows: Vec<mqtt_buffer::NormalizedRow> = Vec::new();
+    let mut all_rows: Vec<mqtt_buffer::ProcessedMsg> = Vec::new();
 
     // Ensure table exists via DB worker
     let create_table_sql = format!(
         "CREATE TABLE IF NOT EXISTS measurements (
             ulid VARCHAR,
             timestamp TIMESTAMP,
-            model VARCHAR,
-            sensor_id VARCHAR,
-            measurement_type INTEGER,
-            value DOUBLE,
             raw_json JSON
         )"
     );
@@ -183,8 +179,8 @@ pub async fn start_mqtt_worker(
                             println!("Got topic: {}, Count: {}, Unflushed: {}", p.topic, counter_tot_msg.get(), counter_unflushed_msg.get());
 
                             let payload_str = String::from_utf8_lossy(&p.payload);
-                            let rows = mqtt_buffer::normalize_one_message(&payload_str);
-                            all_rows.extend(rows);
+                            let msg = mqtt_buffer::process_message(&payload_str);
+                            all_rows.push(msg);
 
                             // check if we should flush to DuckDB
                             if counter_unflushed_msg.get() >= 500 {
