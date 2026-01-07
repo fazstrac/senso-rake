@@ -1,5 +1,5 @@
 [package]
-name = "rust-to-mqtt-prometheus-exporter"
+name = "senso-rake"
 version = "0.1.0"
 edition = "2024"
 
