@@ -1,4 +1,6 @@
-# WIP: rust-to-mqtt-prometheus-exporter
+# WIP: SensoRake
+
+<img src="img/sensorake-logo.png" alt="SensoRake logo">
 
 This is an early-phase project to learn Rust and to create the foundations of a service that 
 - listens to MQTT messages (e.g., weather sensors)
