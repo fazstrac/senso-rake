@@ -42,7 +42,7 @@ COPY . .
 RUN touch src/main.rs && cargo build --release
 
 # --- Runtime stage ---------------------------------------------------------
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Create an unprivileged user to run the service
 RUN useradd -m -u 1000 appuser || true
