@@ -2167,30 +2167,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-to-mqtt-prometheus-exporter"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrow 57.1.0",
- "async-trait",
- "axum",
- "chrono",
- "crossbeam-channel",
- "duckdb",
- "http 0.2.12",
- "hyper 0.14.32",
- "prometheus",
- "rumqttc",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tower",
- "tower-http 0.3.5",
- "ulid",
-]
-
-[[package]]
 name = "rust_decimal"
 version = "1.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2365,6 +2341,30 @@ name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+
+[[package]]
+name = "senso-rake"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow 57.1.0",
+ "async-trait",
+ "axum",
+ "chrono",
+ "crossbeam-channel",
+ "duckdb",
+ "http 0.2.12",
+ "hyper 0.14.32",
+ "prometheus",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tower",
+ "tower-http 0.3.5",
+ "ulid",
+]
 
 [[package]]
 name = "serde"
