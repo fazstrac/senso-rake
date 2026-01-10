@@ -2,14 +2,14 @@
 // execution to `server::run()`. The real implementation lives in the
 // `server`, `state`, `handlers`, and `mqtt` modules under `src/` so each
 // responsibility is isolated and easier to navigate / test.
-mod state;
+mod database;
 mod http;
 mod mqtt;
-mod database;
-mod service;
-mod server;
-mod shutdown_token;
 mod orchestrator;
+mod server;
+mod service;
+mod shutdown_token;
+mod state;
 
 /// Start the service. Keep `main` minimal so hot-reloads, tests, and
 /// integration points can import `server::run()` directly if needed.

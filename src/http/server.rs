@@ -1,21 +1,20 @@
 // HTTP handlers for the service. This module sets up the Axum
 // router with routes, handlers, and middleware.
 use crate::service::{Service, ServiceType};
-use crate::state::{key_for, Mapping};
 use crate::shutdown_token::ShutdownToken;
+use crate::state::{Mapping, key_for};
 
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
 
-use axum::{Json, Router};
 use axum::body::Body;
 use axum::extract::Extension;
-use axum::http::{HeaderMap, Method, Request, StatusCode, HeaderValue};
 use axum::http::header::CONTENT_TYPE;
+use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, put};
-
+use axum::{Json, Router};
 
 pub struct HttpService {
     // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
@@ -48,19 +47,18 @@ impl Service for HttpService {
             // self.http_db_handle.clone(), // commented out for now to wait for refactor
             self.registry.clone(),
             self.shutdown_token.clone(),
-        ).await;
+        )
+        .await;
 
         join_handle
     }
 }
-
 
 pub async fn start_http_server(
     // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
     registry: Arc<Registry>,
     shutdown_token: ShutdownToken,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-
     let app = build_router(registry);
 
     let bind_addr = "0.0.0.0:3000";
@@ -78,7 +76,10 @@ pub async fn start_http_server(
             }
         };
 
-        server.with_graceful_shutdown(shutdown_future).await.unwrap();
+        server
+            .with_graceful_shutdown(shutdown_future)
+            .await
+            .unwrap();
     });
 
     Ok(join_handle)
@@ -87,8 +88,8 @@ pub async fn start_http_server(
 // Build the Axum router with routes, handlers, and middleware.
 // This is separate function for testability.
 fn build_router(
-    // http_db_handle: db::DbHandle, 
-    registry: Arc<Registry>
+    // http_db_handle: db::DbHandle,
+    registry: Arc<Registry>,
 ) -> Router {
     Router::new()
         .route("/mappings", put(put_mapping).get(list_mappings))
@@ -99,7 +100,6 @@ fn build_router(
         // .layer(Extension(http_db_handle)) // commented out for now to wait for refactor
         .layer(middleware::from_fn(cors_middleware))
 }
-
 
 /// Return all mappings as JSON array. This performs a read-lock and clones the
 /// values so the handler does not keep the lock across await points.
@@ -131,7 +131,9 @@ async fn metrics_handler(Extension(registry): Extension<Arc<Registry>>) -> (Head
     let encoder = TextEncoder::new();
     let metric_families = registry.gather();
     let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer).unwrap_or_default();
+    encoder
+        .encode(&metric_families, &mut buffer)
+        .unwrap_or_default();
     let body = String::from_utf8_lossy(&buffer).to_string();
     (HeaderMap::new(), body)
 }
@@ -166,7 +168,6 @@ async fn spa_handler(req: Request<Body>) -> impl IntoResponse {
     }
 }
 
-
 async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response {
     let allow_headers = HeaderValue::from_static("*");
     let allow_methods = HeaderValue::from_static("GET,PUT,POST,OPTIONS");
@@ -195,12 +196,11 @@ async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response
     res
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::{Request, StatusCode};
     use axum::body::Body;
+    use axum::http::{Request, StatusCode};
     use prometheus::Registry;
     use std::sync::Arc;
 
@@ -251,5 +251,4 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
-
 }

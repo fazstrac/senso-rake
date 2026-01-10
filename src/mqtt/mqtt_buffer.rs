@@ -1,8 +1,8 @@
 use crate::mqtt::msg_hash::generate_dedup_ulid;
 
 use anyhow::Result;
-use chrono::{NaiveDateTime, TimeZone, Local, Utc};
-use duckdb::arrow::array::{TimestampMicrosecondArray, StringArray};
+use chrono::{Local, NaiveDateTime, TimeZone, Utc};
+use duckdb::arrow::array::{StringArray, TimestampMicrosecondArray};
 use duckdb::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use duckdb::arrow::record_batch::RecordBatch;
 use std::sync::Arc;
@@ -23,7 +23,6 @@ pub struct ProcessedMsg {
     raw_json: Option<String>,
 }
 
-
 // Normalize one JSON message string into ProcessedMsg entry
 // On error, returns a single row with error info and raw JSON preserved
 pub fn process_message(json_str: &str) -> ProcessedMsg {
@@ -37,7 +36,7 @@ pub fn process_message(json_str: &str) -> ProcessedMsg {
             // Return a special row with raw JSON preserved
             return ProcessedMsg {
                 ulid: Some(generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string()),
-                timestamp: ts, // or a sentinel
+                timestamp: ts,                        // or a sentinel
                 raw_json: Some(json_str.to_string()), // keep the original string
             };
         }
@@ -57,7 +56,7 @@ fn parse_time(val_opt: &String) -> i64 {
 
     // Try to parse the time string as Unix epoch seconds with microseconds (f64)
     // If parsing fails, try to parse in "YYYY-MM-DD HH:MM:SS" format
-    
+
     if !s.is_empty() {
         // First, attempt to parse as f64 (Unix epoch seconds with fractional microseconds)
         if let Ok(epoch_f64) = s.parse::<f64>() {
@@ -81,9 +80,8 @@ pub fn create_arrow_record_batch(rows: &Vec<ProcessedMsg>) -> Result<RecordBatch
             .map(|r| r.ulid.clone().unwrap_or_default())
             .collect::<Vec<String>>(),
     );
-    let ra = TimestampMicrosecondArray::from(
-        rows.iter().map(|r| r.timestamp).collect::<Vec<i64>>()
-    );
+    let ra =
+        TimestampMicrosecondArray::from(rows.iter().map(|r| r.timestamp).collect::<Vec<i64>>());
     let raw_arr = StringArray::from(
         rows.iter()
             .map(|r| r.raw_json.clone().unwrap_or_default())
@@ -92,22 +90,21 @@ pub fn create_arrow_record_batch(rows: &Vec<ProcessedMsg>) -> Result<RecordBatch
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("ulid", DataType::Utf8, false),
-        Field::new("timestamp", DataType::Timestamp(TimeUnit::Microsecond, None), false),
+        Field::new(
+            "timestamp",
+            DataType::Timestamp(TimeUnit::Microsecond, None),
+            false,
+        ),
         Field::new("raw_json", DataType::Utf8, false),
     ]));
 
     let batch = RecordBatch::try_new(
         schema,
-        vec![
-            Arc::new(ulid_arr),
-            Arc::new(ra),
-            Arc::new(raw_arr),
-        ],
+        vec![Arc::new(ulid_arr), Arc::new(ra), Arc::new(raw_arr)],
     )?;
 
     Ok(batch)
 }
-
 
 //
 //   TESTS
@@ -193,7 +190,10 @@ mod tests {
         let bad = "{ this is not valid json }";
         let msg = process_message(bad);
         assert_eq!(msg.raw_json.as_deref(), Some(bad));
-        assert!(msg.ulid.is_some(), "ulid should be generated for error rows");
+        assert!(
+            msg.ulid.is_some(),
+            "ulid should be generated for error rows"
+        );
     }
 
     #[test]
@@ -203,7 +203,10 @@ mod tests {
         let bad = "{ \"message\": \"this is valid json, but missing expected fields\" }";
         let msg = process_message(bad);
         assert_eq!(msg.raw_json.as_deref(), Some(bad));
-        assert!(msg.ulid.is_some(), "ulid should be generated for error rows");
+        assert!(
+            msg.ulid.is_some(),
+            "ulid should be generated for error rows"
+        );
     }
 
     #[test]
@@ -248,7 +251,10 @@ mod tests {
         let s = "invalid".to_string();
         let ts = parse_time(&s);
         // Should be current time, which is > some known past time
-        let past_ts = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap().timestamp_micros();
+        let past_ts = Utc
+            .with_ymd_and_hms(2020, 1, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp_micros();
         assert!(ts > past_ts, "fallback should be current time");
     }
 
@@ -257,7 +263,10 @@ mod tests {
         // Test empty string falls back to current time
         let s = "".to_string();
         let ts = parse_time(&s);
-        let past_ts = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap().timestamp_micros();
+        let past_ts = Utc
+            .with_ymd_and_hms(2020, 1, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp_micros();
         assert!(ts > past_ts, "fallback should be current time");
     }
 }
