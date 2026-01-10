@@ -21,7 +21,7 @@ pub struct MqttService {
     counter_tot_msg: IntCounter,
     counter_unflushed_msg: IntCounter,
     db: DbHandle,
-    shutdown_token: ShutdownToken,  
+    shutdown_token: ShutdownToken,
 }
 
 impl MqttService {
@@ -48,18 +48,18 @@ impl Service for MqttService {
 
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         let join_handle = start_mqtt_worker(
-            self.counter_tot_msg.clone(), 
+            self.counter_tot_msg.clone(),
             self.counter_unflushed_msg.clone(),
             self.db.clone(),
             self.shutdown_token.clone(),
-        ).await;
+        )
+        .await;
         join_handle
     }
 }
 
-
 pub async fn start_mqtt_worker(
-    counter_tot_msg: IntCounter, 
+    counter_tot_msg: IntCounter,
     counter_unflushed_msg: IntCounter,
     db: DbHandle,
     shutdown_token: ShutdownToken,
@@ -92,12 +92,12 @@ pub async fn start_mqtt_worker(
                 anyhow::anyhow!("Invalid MQTT_PORT value, expected a number, got: {}", e)
             })?;
             mqttoptions = MqttOptions::new("rust_exporter_client", &host, p);
-            println!("Connecting to MQTT broker at {}:{}", host, p);            
+            println!("Connecting to MQTT broker at {}:{}", host, p);
         }
         // Only host provided, default to port 1883
         (Some(host), None) => {
             mqttoptions = MqttOptions::new("rust_exporter_client", &host, 1883);
-            println!("Connecting to MQTT broker at {}:1883", host);                
+            println!("Connecting to MQTT broker at {}:1883", host);
         }
         // Only port provided, default to localhost as host
         (None, Some(port)) => {
@@ -112,13 +112,15 @@ pub async fn start_mqtt_worker(
     mqttoptions.set_keep_alive(std::time::Duration::from_secs(5));
 
     match (mqtt_user, mqtt_pass) {
-        (Some(user), Some(pass)) => {            
+        (Some(user), Some(pass)) => {
             mqttoptions.set_credentials(&user, &pass);
             println!("Using MQTT credentials from environment {}:*******", user);
         }
         (Some(_), None) | (None, Some(_)) => {
             // Warn but continue without credentials if only one is set.
-            return Err(anyhow::anyhow!("MQTT credentials incomplete: both MQTT_USER and MQTT_PASS must be set to enable auth"));
+            return Err(anyhow::anyhow!(
+                "MQTT credentials incomplete: both MQTT_USER and MQTT_PASS must be set to enable auth"
+            ));
         }
         (None, None) => {
             // No credentials configured; proceed unauthenticated.
@@ -130,35 +132,25 @@ pub async fn start_mqtt_worker(
 
     match mqtt_topic {
         Some(topic) => {
-            client.subscribe(&topic, QoS::AtLeastOnce).await.map_err(|e| {
-                anyhow::anyhow!("Error subscribing to MQTT topic {}: {}", topic, e)
-            })?;
+            client
+                .subscribe(&topic, QoS::AtLeastOnce)
+                .await
+                .map_err(|e| anyhow::anyhow!("Error subscribing to MQTT topic {}: {}", topic, e))?;
             println!("Subscribing to MQTT topic: {}", topic);
         }
         None => {
-            return Err(anyhow::anyhow!("MQTT_TOPIC environment variable not set, cannot subscribe to topic"));
+            return Err(anyhow::anyhow!(
+                "MQTT_TOPIC environment variable not set, cannot subscribe to topic"
+            ));
         }
     }
 
     let mut all_rows: Vec<mqtt_buffer::ProcessedMsg> = Vec::new();
 
-    // Ensure table exists via DB worker
-    let create_table_sql = format!(
-        "CREATE TABLE IF NOT EXISTS measurements (
-            ulid VARCHAR,
-            timestamp TIMESTAMP,
-            raw_json JSON
-        )"
-    );
-
-    db.query(create_table_sql).await.map_err(|e| {
-            anyhow::anyhow!("Error creating measurements table in DuckDB: {}", e)
-    })?;
-    
-    // Timer for periodic flush and checkpoint    
+    // Timer for periodic flush and checkpoint
     let mut interval_flush = time::interval(Duration::from_secs(600));
 
-    let join_handle = tokio::task::spawn(async move {        
+    let join_handle = tokio::task::spawn(async move {
         loop {
             tokio::select! {
                 // General idea:
@@ -173,7 +165,7 @@ pub async fn start_mqtt_worker(
                         // on receiving a publish
                         // If unflushed count exceeds threshold, flush to DuckDB
                         // that happens most likely during bursts of messages (over 500 msgs per 113 seconds)
-                        Ok(Event::Incoming(Incoming::Publish(p))) => {                
+                        Ok(Event::Incoming(Incoming::Publish(p))) => {
                             counter_tot_msg.inc();
                             counter_unflushed_msg.inc();
                             println!("Got topic: {}, Count: {}, Unflushed: {}", p.topic, counter_tot_msg.get(), counter_unflushed_msg.get());
@@ -187,7 +179,7 @@ pub async fn start_mqtt_worker(
                                 // Every 500 hits, flush to DuckDB
                                 match mqtt_buffer::create_arrow_record_batch(&all_rows) {
                                     Ok(batch) => {
-                                        match db.insert_batch(batch, "measurements").await {
+                                        match db.insert_batch(batch, "data_landing").await {
                                             Ok(_) => {
                                                 println!("Flushed {} rows to DuckDB", all_rows.len());
                                                 all_rows.clear();
@@ -197,7 +189,7 @@ pub async fn start_mqtt_worker(
                                         }
                                     }
                                     Err(e) => eprintln!("Error creating Arrow batch: {}", e),
-                                }                                
+                                }
                             }
                         }
                         Ok(Event::Incoming(i)) => {
@@ -215,13 +207,12 @@ pub async fn start_mqtt_worker(
                 }
                 // Timer tick
                 _ = interval_flush.tick() => {
-                    // Periodic flush and checkpoint to DuckDB
+                    // Periodic flush to DuckDB
                     if !all_rows.is_empty() {
                         match mqtt_buffer::create_arrow_record_batch(&all_rows) {
-                            Ok(batch) => match db.insert_batch(batch, "measurements").await {
+                            Ok(batch) => match db.insert_batch(batch, "data_landing").await {
                                 Ok(_) => {
                                     println!("Periodic flush: Flushed {} rows to DuckDB", all_rows.len());
-                                    db.flush().await.unwrap_or_else(|e| eprintln!("Error during DuckDB checkpoint: {}", e));
                                     all_rows.clear();
                                     counter_unflushed_msg.reset();
                                 }
@@ -238,11 +229,10 @@ pub async fn start_mqtt_worker(
 
                     if !all_rows.is_empty() {
                         match mqtt_buffer::create_arrow_record_batch(&all_rows) {
-                            Ok(batch) => match db.insert_batch(batch, "measurements").await {
+                            Ok(batch) => match db.insert_batch(batch, "data_landing").await {
                                 Ok(_) => {
                                     println!("Shutdown flush: Flushed {} rows to DuckDB", all_rows.len());
                                     all_rows.clear();
-                                    db.flush().await.unwrap_or_else(|e| eprintln!("Error during DuckDB checkpoint on shutdown: {}", e));
                                 }
                                 Err(e) => eprintln!("Error during shutdown flush to DuckDB: {}", e),
                             }
@@ -256,9 +246,8 @@ pub async fn start_mqtt_worker(
             }
         }
 
-    println!("MQTT loop exiting cleanly.");
+        println!("MQTT loop exiting cleanly.");
     });
 
     Ok(join_handle)
 }
-

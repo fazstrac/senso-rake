@@ -1,4 +1,5 @@
 mod db;
+mod schema;
 
-pub use db::DbService;
 pub use db::DbHandle;
+pub use db::DbService;
