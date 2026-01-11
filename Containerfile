@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.created=$BUILD_DATE
 
 # Install common system build dependencies (adjust if your deps require others)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates curl wget && \
+    apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
