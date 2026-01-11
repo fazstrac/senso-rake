@@ -5,6 +5,7 @@ use crate::orchestrator::Orchestrator;
 use crate::{database, http, mqtt, service::Service, shutdown_token};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use log::info;
 use prometheus::{IntCounter, Registry};
 use std::sync::Arc;
 use tokio::signal::unix::{SignalKind, signal};
@@ -64,19 +65,19 @@ pub async fn run() -> anyhow::Result<()> {
         loop {
             tokio::select! {
                 _ = sigterm.recv() => {
-                    println!("Received SIGTERM, initiating shutdown...");
+                    info!("Received SIGTERM, initiating shutdown...");
 
                     break;
                 }
                 _ = sigint.recv() => {
-                    println!("Received SIGINT, initiating shutdown...");
+                    info!("Received SIGINT, initiating shutdown...");
 
                     break;
                 }
             }
         }
 
-        println!("Signal handling task exiting cleanly.");
+        info!("Signal handling task exiting cleanly.");
     })
     .await?;
 

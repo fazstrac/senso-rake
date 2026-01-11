@@ -1,3 +1,5 @@
+use log::{error, info};
+
 use crate::database::schema;
 // Database interaction module
 use crate::service::{Service, ServiceType};
@@ -148,6 +150,7 @@ fn start_db_worker(
         schema::SCHEMA_SQL,
         schema::UPDATE_TABLES_SQL
     ));
+    info!("Database initialized successfully");
 
     res.map_err(|e| anyhow::anyhow!("Error initializing database: {}", e))?;
 
@@ -161,7 +164,7 @@ fn start_db_worker(
                     let job = match job {
                         Ok(j) => j,
                         Err(_) => {
-                            println!("DB worker channel closed, exiting.");
+                            info!("DB worker channel closed, exiting.");
                             // All senders have been dropped, close the connection and exit the loop
                             // Channel closed, exit the loop
                             break;
@@ -169,26 +172,26 @@ fn start_db_worker(
                     };
 
                     handle_db_job(job, &conn).map_err(|e| {
-                        println!("Error handling DB job: {}", e);
+                        error!("Error handling DB job: {}", e);
                     }).ok();
                 }
 
                 // Shutdown signal received, exit the loop
                 recv(shutdown_rx) -> _ => {
-                    println!("DB worker received shutdown signal.");
+                    info!("DB worker received shutdown signal.");
                     // Shutdown signal received, exit the loop
                     break;
                 }
 
                 // Periodic ticker to do periodic updates
                 recv(ticker) -> _ => {
-                    println!("Periodic update of derived tables");
+                    info!("Periodic update of derived tables");
                     conn.execute_batch(&format!(
                         "BEGIN; {} COMMIT;",
                         schema::UPDATE_TABLES_SQL
                     ))
                     .map_err(|e| {
-                        println!("Error in updating {}", e);
+                        error!("Error in updating {}", e);
                     })
                     .ok();
                 }
@@ -197,13 +200,13 @@ fn start_db_worker(
 
         conn.execute("CHECKPOINT", [])
             .map_err(|e| {
-                println!("Error in checkpointing {}", e);
+                error!("Error in checkpointing {}", e);
             })
             .ok();
 
         conn.close()
             .map_err(|e| {
-                println!("Error closing DuckDB connection: {}", e.1);
+                error!("Error closing DuckDB connection: {}", e.1);
             })
             .ok();
     });

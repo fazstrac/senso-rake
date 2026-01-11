@@ -4,6 +4,8 @@ use crate::service::{Service, ServiceType};
 use crate::shutdown_token::ShutdownToken;
 use crate::state::{Mapping, key_for};
 
+use log::info;
+
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
 
@@ -65,14 +67,14 @@ pub async fn start_http_server(
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
 
     let join_handle = tokio::spawn(async move {
-        println!("listening on {}", bind_addr);
+        info!("listening on {}", bind_addr);
 
         let server = axum::serve(listener, app);
 
         let shutdown_future = {
             async move {
                 shutdown_token.wait().await;
-                println!("HTTP server shutdown signal received.");
+                info!("HTTP server shutdown signal received.");
             }
         };
 

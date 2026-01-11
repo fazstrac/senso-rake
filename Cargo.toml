@@ -19,6 +19,8 @@ tower = "0.5.2"
 async-trait = "0.1.89"
 ulid = "1.2.1"
 sha2 = "0.10.9"
+log = "0.4.29"
+env_logger = "0.11.8"
 
 [profile.dev]
 opt-level = 0

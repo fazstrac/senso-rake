@@ -1,3 +1,5 @@
+use log::info;
+
 // `main.rs` is intentionally tiny: it only declares modules and delegates
 // execution to `server::run()`. The real implementation lives in the
 // `server`, `state`, `handlers`, and `mqtt` modules under `src/` so each
@@ -15,5 +17,10 @@ mod state;
 /// integration points can import `server::run()` directly if needed.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize the logger (only do this once!)
+    env_logger::init();
+
+    info!("Starting service");
+
     server::run().await
 }
