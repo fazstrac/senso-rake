@@ -184,11 +184,11 @@ fn start_db_worker(
                 recv(ticker) -> _ => {
                     println!("Periodic update of derived tables");
                     conn.execute_batch(&format!(
-                        "BEGIN; {} COMMIT; CHECKPOINT;",
+                        "BEGIN; {} COMMIT;",
                         schema::UPDATE_TABLES_SQL
                     ))
                     .map_err(|e| {
-                        println!("Error in checkpointing {}", e);
+                        println!("Error in updating {}", e);
                     })
                     .ok();
                 }
