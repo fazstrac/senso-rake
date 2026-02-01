@@ -61,8 +61,8 @@ pub async fn run() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         // let mut sighup = signal(SignalKind::hangup()).unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to bind to SIGTERM");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to bind to SIGINT");
 
         tokio::select! {
             _ = sigterm.recv() => info!("Received SIGTERM, initiating shutdown. Press again to force exit."),
