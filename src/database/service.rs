@@ -94,6 +94,8 @@ impl DbHandle {
         Ok(())
     }
 
+    // These will be readded later as needed
+
     // pub async fn execute_batch(&self, batch: String) -> anyhow::Result<()> {
     //     let (tx, rx) = oneshot::channel();
     //     let job = DbJob {
@@ -222,7 +224,7 @@ fn start_db_worker(
 }
 
 fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
-    match job.command {
+    match job.command {        
         // DbCommand::ExecuteBatch(sql) => {
         //     let res = conn.execute_batch(&sql);
         //     let _ = job.response.send(
@@ -292,25 +294,6 @@ mod tests {
         assert!(res.is_ok(), "insert_batch should succeed");
     }
 
-    // #[tokio::test]
-    // async fn test_query_roundtrip() {
-    //     let (tx, rx) = unbounded::<DbJob>();
-    //     let handle = DbHandle::new(tx.clone());
+    
 
-    //     thread::spawn(move || {
-    //         if let Ok(job) = rx.recv() {
-    //             match job.command {
-    //                 DbCommand::Query(_q) => {
-    //                     let _ = job.response.send(Ok(DbResponse::QueryResult));
-    //                 }
-    //                 _ => {
-    //                     let _ = job.response.send(Ok(DbResponse::QueryResult));
-    //                 }
-    //             }
-    //         }
-    //     });
-
-    //     let res = handle.query("SELECT 1".to_string()).await;
-    //     assert!(res.is_ok(), "query should succeed");
-    // }
 }
