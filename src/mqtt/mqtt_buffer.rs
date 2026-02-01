@@ -20,7 +20,7 @@ pub struct ProcessedMsg {
     // Universally Unique Lexicographically Sortable Identifier
     ulid: Option<String>,
     // microseconds since epoch; suitable for Arrow Timestamp(Microsecond)
-    timestamp: i64,
+    ts: i64,
     raw_json: Option<String>,
 }
 
@@ -37,7 +37,7 @@ pub fn process_message(json_str: &str) -> ProcessedMsg {
             // Return a special row with raw JSON preserved
             return ProcessedMsg {
                 ulid: Some(generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string()),
-                timestamp: ts,                        // or a sentinel
+                ts,                        // or a sentinel
                 raw_json: Some(json_str.to_string()), // keep the original string
             };
         }
@@ -47,7 +47,7 @@ pub fn process_message(json_str: &str) -> ProcessedMsg {
 
     ProcessedMsg {
         ulid: Some(generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string()),
-        timestamp: ts,
+        ts,
         raw_json: Some(json_str.to_string()),
     }
 }
@@ -82,7 +82,7 @@ pub fn create_arrow_record_batch(rows: &[ProcessedMsg]) -> Result<RecordBatch> {
             .collect::<Vec<String>>(),
     );
     let ra =
-        TimestampMicrosecondArray::from(rows.iter().map(|r| r.timestamp).collect::<Vec<i64>>());
+        TimestampMicrosecondArray::from(rows.iter().map(|r| r.ts).collect::<Vec<i64>>());
     let raw_arr = StringArray::from(
         rows.iter()
             .map(|r| r.raw_json.clone().unwrap_or_default())
@@ -92,7 +92,7 @@ pub fn create_arrow_record_batch(rows: &[ProcessedMsg]) -> Result<RecordBatch> {
     let schema = Arc::new(Schema::new(vec![
         Field::new("ulid", DataType::Utf8, false),
         Field::new(
-            "timestamp",
+            "ts",
             DataType::Timestamp(TimeUnit::Microsecond, None),
             false,
         ),
@@ -176,10 +176,10 @@ mod tests {
         // Expected 1 row per message, 4 messages
         assert_eq!(all_rows.len(), 4, "expected 4 normalized rows");
 
-        // Check that each row has ulid, timestamp, and raw_json
+        // Check that each row has ulid, ts, and raw_json
         for r in &all_rows {
             assert!(r.ulid.is_some(), "ulid should be present");
-            assert!(r.timestamp > 0, "timestamp should be parsed");
+            assert!(r.ts > 0, "ts should be parsed");
             assert!(r.raw_json.is_some(), "raw_json should be present");
         }
     }
@@ -241,8 +241,8 @@ mod tests {
         // Test parsing datetime string
         let s = "2025-11-29 22:00:39".to_string();
         let ts = parse_time(&s);
-        // Should be a valid timestamp > 0
-        assert!(ts > 0, "timestamp should be parsed successfully");
+        // Should be a valid ts > 0
+        assert!(ts > 0, "ts should be parsed successfully");
         // Optionally, check approximate value, but depends on timezone
     }
 
