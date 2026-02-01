@@ -101,20 +101,14 @@ fn build_router(
         .layer(middleware::from_fn(cors_middleware))
 }
 
-/// Return all mappings as JSON array. This performs a read-lock and clones the
-/// values so the handler does not keep the lock across await points.
+/// Return all mappings as a JSON array.
+///
+/// NOTE: This is currently a stub implementation and does not read from
+/// real storage. It returns an empty list until storage integration is
+/// wired in.
 async fn list_mappings() -> Json<Vec<Mapping>> {
-    // return a static mapping for now
-    let mapping = Mapping {
-        sensor_id: "sensor123".to_string(),
-        manufacturer: "AcmeCorp".to_string(),
-        name: "Temperature Sensor".to_string(),
-    };
-    let mut map = std::collections::HashMap::new();
-    map.insert(key_for(&mapping.sensor_id, &mapping.manufacturer), mapping);
-
-    let vec = map.values().cloned().collect();
-    Json(vec)
+    // TODO: Integrate with persistent storage to fetch real mappings.
+    Json(Vec::new())
 }
 
 /// Insert or update a mapping. Expects a JSON body matching `Mapping`.
