@@ -6,7 +6,7 @@
 use crate::service::{Service, ServiceType};
 use crate::shutdown_token::ShutdownToken;
 
-use log::{error, info};
+use log::{error, info, debug};
 use prometheus::IntCounter;
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
 use tokio::time::{self, Duration};
@@ -193,15 +193,16 @@ pub async fn start_mqtt_worker(
                             }
                         }
                         Ok(Event::Incoming(i)) => {
-                            info!("Incoming = {i:?}");
+                            debug!("Incoming = {i:?}");
                         }
                         Ok(Event::Outgoing(o)) => {
-                            info!("Outgoing = {o:?}");
+                            debug!("Outgoing = {o:?}");
                         }
                         Err(e) => {
-                            // Back off on errors to avoid busy loops.
-                            error!("mqtt loop error: {}", e);
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            // Don't crash on MQTT errors; restart the connection.
+                            error!("MQTT error encountered, connection should be restarted automatically: {}", e);
+                            // Back off briefly before retrying
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await                        
                         }
                     }
                 }
