@@ -1,5 +1,5 @@
 # --- Builder stage ---------------------------------------------------------
-FROM rust:1.92-trixie AS builder
+FROM rust:1.93-trixie AS builder
 
 ARG BUILD_DATE
 LABEL org.opencontainers.image.created=$BUILD_DATE
