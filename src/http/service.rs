@@ -2,7 +2,7 @@
 // router with routes, handlers, and middleware.
 use crate::service::{Service, ServiceType};
 use crate::shutdown_token::ShutdownToken;
-use crate::state::{Mapping, key_for};
+use crate::state::{Mapping};
 
 use log::info;
 
@@ -19,14 +19,18 @@ use axum::routing::{get, put};
 use axum::{Json, Router};
 
 pub struct HttpService {
-    // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
+    // This is a placeholder for future database handle integration. To be implemented
+    // during HTTP service refactor
+    // http_db_handle: db::DbHandle,
     registry: Arc<Registry>,
     shutdown_token: ShutdownToken, // This should be replaced with a shutdown token
 }
 
 impl HttpService {
     pub fn new(
-        // http_db_handle: db::DbHandle, // commented out for now to wait for refactor
+        // This is a placeholder for future database handle integration. To be implemented
+        // during HTTP service refactor
+        // http_db_handle: db::DbHandle,
         registry: Arc<Registry>,
         shutdown_token: ShutdownToken,
     ) -> Self {
@@ -46,7 +50,9 @@ impl Service for HttpService {
 
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         start_http_server(
-            // self.http_db_handle.clone(), // commented out for now to wait for refactor
+            // This is a placeholder for future database handle integration. To be implemented
+            // during HTTP service refactor
+            // self.http_db_handle.clone(),
             self.registry.clone(),
             self.shutdown_token.clone(),
         )
