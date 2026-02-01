@@ -1,4 +1,4 @@
-mod mqtt_buffer;
+pub mod mqtt_buffer;
 mod msg_hash;
 mod service;
 
