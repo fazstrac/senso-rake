@@ -4,5 +4,5 @@ node_modules/
 .DS_Store
 .env
 mappings.json
-example.duckdb
-src/bin/ingest_example.rs
+*.db*
+setup_env.sh

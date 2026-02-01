@@ -1,78 +1,93 @@
 // `server.rs` composes the HTTP application: it loads initial state,
 // registers Prometheus metrics, starts the MQTT background task, and
 // mounts HTTP handlers and middleware.
-use crate::{handlers, mqtt, state::{load_mappings, Store}};
-use axum::{routing::{get, put}, Router, Extension};
-use prometheus::{Registry, IntCounter};
+use crate::orchestrator::Orchestrator;
+use crate::{database, http, mqtt, service::Service, shutdown_token};
+
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use log::info;
+use prometheus::{IntCounter, Registry};
 use std::sync::Arc;
-use tokio::task;
-use axum::middleware::{self, Next};
-use axum::response::Response;
-use axum::http::{Request, Method, HeaderValue, StatusCode};
-
-
+use tokio::signal::unix::{SignalKind, signal};
 
 pub async fn run() -> anyhow::Result<()> {
-    let initial = load_mappings().await.unwrap_or_default();
-    let store: Store = Arc::new(tokio::sync::RwLock::new(initial));
-
     let registry = Arc::new(Registry::new());
-    let messages_counter = IntCounter::new("mqtt_messages_total", "Total MQTT messages received").unwrap();
-    registry.register(Box::new(messages_counter.clone())).ok();
+    let mqtt_messages_received_counter =
+        IntCounter::new("mqtt_messages_total", "Total MQTT messages received")?;
+    let mqtt_messages_not_flushed_to_db = IntCounter::new(
+        "mqtt_unflushed_total",
+        "Total unflushed MQTT messages in WAL",
+    )?;
+    registry.register(Box::new(mqtt_messages_received_counter.clone()))?;
+    registry.register(Box::new(mqtt_messages_not_flushed_to_db.clone()))?;
 
-    let mqtt_counter = messages_counter.clone();
-    task::spawn(async move {
-        if let Err(e) = mqtt::start_mqtt_loop(mqtt_counter).await {
-            eprintln!("MQTT task ended: {}", e);
+    let shutdown_token = shutdown_token::ShutdownToken::new();
+
+    let mut services: Vec<Box<dyn Service>> = vec![];
+
+    // Build DB service
+    let db_path = std::env::var("DUCKDB_PATH").ok();
+    let (db_shutdown_tx, db_shutdown_rx): (Sender<()>, Receiver<()>) = unbounded();
+
+    let db_svc = database::DbService::new(db_path, db_shutdown_rx)?;
+    let db_handle = db_svc.get_handle();
+
+    services.push(Box::new(db_svc));
+
+    // Build MQTT service
+    let mqtt_service = mqtt::MqttService::new(
+        mqtt_messages_received_counter.clone(),
+        mqtt_messages_not_flushed_to_db.clone(),
+        db_handle.clone(),
+        shutdown_token.clone(),
+    );
+
+    services.push(Box::new(mqtt_service));
+
+    // Build HTTP service
+    let http_service = http::HttpService::new(
+        // db_handle.clone();  // commented out for now to wait for refactor
+        registry.clone(),
+        shutdown_token.clone(),
+    );
+
+    services.push(Box::new(http_service));
+
+    let mut orchestrator = Orchestrator::new(services, shutdown_token, db_shutdown_tx);
+
+    orchestrator.start_all().await?;
+
+    let (shutdown_notify_tx, shutdown_notify_rx) = tokio::sync::oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        // let mut sighup = signal(SignalKind::hangup()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to bind to SIGTERM");
+        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to bind to SIGINT");
+
+        tokio::select! {
+            _ = sigterm.recv() => info!("Received SIGTERM, initiating shutdown. Press again to force exit."),
+            _ = sigint.recv() => info!("Received SIGINT, initiating shutdown. Press again to force exit."),
+        }
+
+        let _ = shutdown_notify_tx.send(());
+
+        // Refactor: consider different strategy than bypassing normal shutdown. Possibly even removing this.
+
+        tokio::select! {
+            _ = sigterm.recv() => { 
+                info!("Second SIGTERM, exiting immediately.");
+                std::process::exit(1);
+            },
+            _ = sigint.recv() => { 
+                info!("Second SIGINT, exiting immediately.");
+                std::process::exit(1);
+            },
         }
     });
 
-    // Build the HTTP app. Layers are applied from bottom -> top: the
-    // `Extension` layers provide shared state (Store and Registry) to
-    // handlers. The CORS middleware is mounted last so it can ensure
-    // headers are applied to all responses.
-    let app = Router::new()
-        .route("/mapping", put(handlers::put_mapping).get(handlers::list_mappings))
-        .route("/metrics", get(handlers::metrics_handler))
-        .route("/health", get(|| async { "ok" }))
-        .fallback_service(get(handlers::spa_handler))
-        .layer(Extension(store))
-        .layer(Extension(registry))
-        .layer(middleware::from_fn(cors_middleware));
-
-    let bind_addr = "0.0.0.0:3000";
-    println!("listening on {}", bind_addr);
-
-    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    axum::serve(listener, app).await?;
+    let _ = shutdown_notify_rx.await;
+    orchestrator.initiate_shutdown().await;
+    orchestrator.shutdown_all().await;
 
     Ok(())
-}
-
-async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response {
-    let allow_headers = HeaderValue::from_static("*");
-    let allow_methods = HeaderValue::from_static("GET,PUT,POST,OPTIONS");
-    let allow_origin = HeaderValue::from_static("*");
-
-    if req.method() == &Method::OPTIONS {
-        let mut res = Response::new(axum::body::Body::empty());
-        *res.status_mut() = StatusCode::NO_CONTENT;
-        let headers = res.headers_mut();
-        // Common preflight response headers. For production, consider
-        // restricting `allow_origin` to your frontend domain and only
-        // allowing the specific headers you need.
-        headers.insert("access-control-allow-origin", allow_origin.clone());
-        headers.insert("access-control-allow-methods", allow_methods.clone());
-        headers.insert("access-control-allow-headers", allow_headers.clone());
-        return res;
-    }
-
-    let mut res = next.run(req).await;
-    let headers = res.headers_mut();
-    // Attach the same CORS headers to the normal responses so the browser
-    // accepts the responses from the API.
-    headers.insert("access-control-allow-origin", allow_origin);
-    headers.insert("access-control-allow-methods", allow_methods);
-    headers.insert("access-control-allow-headers", allow_headers);
-    res
 }
