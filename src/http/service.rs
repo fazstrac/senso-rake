@@ -4,7 +4,7 @@ use crate::service::{Service, ServiceType};
 use crate::shutdown_token::ShutdownToken;
 use crate::state::{Mapping};
 
-use log::info;
+use log::{info, error};
 
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
@@ -82,10 +82,11 @@ pub async fn start_http_server(
             }
         };
 
-        server
+        if let Err(err) = server
             .with_graceful_shutdown(shutdown_future)
-            .await
-            .unwrap();
+            .await {
+            error!("HTTP server in shutdown: {}", err);
+        };
     });
 
     Ok(join_handle)
@@ -98,6 +99,7 @@ fn build_router(
     registry: Arc<Registry>,
 ) -> Router {
     Router::new()
+        // These are subject to change as we refactor the HTTP service
         .route("/mappings", put(put_mapping).get(list_mappings))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(|| async { StatusCode::OK }))
