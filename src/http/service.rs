@@ -112,10 +112,16 @@ async fn list_mappings() -> Json<Vec<Mapping>> {
 }
 
 /// Insert or update a mapping. Expects a JSON body matching `Mapping`.
-/// Returns `201 Created` on success. In a production service you'd validate
-/// fields and possibly return `400 Bad Request` for invalid payloads.
-async fn put_mapping(Json(_payload): Json<Mapping>) -> Result<StatusCode, (StatusCode, String)> {
-    Ok(StatusCode::CREATED)
+/// 
+/// NOTE: This endpoint is currently not connected to persistent storage and
+/// will always return `501 Not Implemented`. It is intentionally left
+/// non-functional until the database refactor is complete.
+async fn put_mapping(Json(_payload): Json<Mapping>) -> (StatusCode, String) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        "PUT /mappings is not implemented: mapping storage is currently disabled"
+            .to_string(),
+    )
 }
 
 /// Expose Prometheus text-format metrics gathered from the provided
