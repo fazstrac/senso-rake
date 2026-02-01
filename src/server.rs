@@ -71,6 +71,8 @@ pub async fn run() -> anyhow::Result<()> {
 
         let _ = shutdown_notify_tx.send(());
 
+        // Refactor: consider different strategy than bypassing normal shutdown. Possibly even removing this.
+
         tokio::select! {
             _ = sigterm.recv() => { 
                 info!("Second SIGTERM, exiting immediately.");
