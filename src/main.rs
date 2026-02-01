@@ -17,7 +17,6 @@ mod state;
 /// integration points can import `server::run()` directly if needed.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize the logger (only do this once!)
     env_logger::init();
 
     info!("Starting service");

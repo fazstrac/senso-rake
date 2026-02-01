@@ -5,6 +5,7 @@ use chrono::{Local, NaiveDateTime, TimeZone, Utc};
 use duckdb::arrow::array::{StringArray, TimestampMicrosecondArray};
 use duckdb::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use duckdb::arrow::record_batch::RecordBatch;
+use log::error;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -29,7 +30,7 @@ pub fn process_message(json_str: &str) -> ProcessedMsg {
     let raw: RawMessage = match serde_json::from_str(json_str) {
         Ok(r) => r,
         Err(err) => {
-            eprintln!("Error parsing JSON message: {}", err);
+            error!("Error parsing JSON message: {}", err);
             // Save current timestamp for error case
             // Same timestamp should be used for ULID generation
             let ts = Utc::now().timestamp_micros();
@@ -51,8 +52,8 @@ pub fn process_message(json_str: &str) -> ProcessedMsg {
     }
 }
 
-fn parse_time(val_opt: &String) -> i64 {
-    let s = val_opt.as_str();
+fn parse_time(val_opt: &str) -> i64 {
+    let s = val_opt;
 
     // Try to parse the time string as Unix epoch seconds with microseconds (f64)
     // If parsing fails, try to parse in "YYYY-MM-DD HH:MM:SS" format
@@ -64,17 +65,17 @@ fn parse_time(val_opt: &String) -> i64 {
         }
 
         // Then, try to parse in "YYYY-MM-DD HH:MM:SS" format
-        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-            if let Some(local_dt) = Local.from_local_datetime(&ndt).single() {
-                return local_dt.with_timezone(&Utc).timestamp_micros();
-            }
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+            && let Some(local_dt) = Local.from_local_datetime(&ndt).single()
+        {
+            return local_dt.with_timezone(&Utc).timestamp_micros();
         }
     }
 
     Utc::now().timestamp_micros()
 }
 
-pub fn create_arrow_record_batch(rows: &Vec<ProcessedMsg>) -> Result<RecordBatch> {
+pub fn create_arrow_record_batch(rows: &[ProcessedMsg]) -> Result<RecordBatch> {
     let ulid_arr = StringArray::from(
         rows.iter()
             .map(|r| r.ulid.clone().unwrap_or_default())
