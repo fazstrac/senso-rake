@@ -72,12 +72,15 @@ pub async fn run() -> anyhow::Result<()> {
         let _ = shutdown_notify_tx.send(());
 
         tokio::select! {
-            _ = sigterm.recv() => info!("Second SIGTERM, exiting immediately."),
-            _ = sigint.recv() => info!("Second SIGINT, exiting immediately."),
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
+            _ = sigterm.recv() => { 
+                info!("Second SIGTERM, exiting immediately.");
+                std::process::exit(1);
+            },
+            _ = sigint.recv() => { 
+                info!("Second SIGINT, exiting immediately.");
+                std::process::exit(1);
+            },
         }
-
-        info!("Signal handling task exiting cleanly.");
     });
 
     let _ = shutdown_notify_rx.await;
