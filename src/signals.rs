@@ -56,7 +56,7 @@ pub async fn start_signal_handler(
         loop {
             tokio::select! {
                 _ = sighup.recv() => {
-                    println!("Received SIGHUP, CHECKPOINTING database...");
+                    println!("Received SIGHUP, checkpointing database...");
 
                     db_handle_for_signal.flush().await.unwrap_or_else(|e| {
                         eprintln!("Error flushing DB on SIGHUP: {}", e);
