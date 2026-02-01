@@ -163,9 +163,23 @@ async fn spa_handler(req: Request<Body>) -> impl IntoResponse {
 }
 
 async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response {
-    let allow_headers = HeaderValue::from_static("*");
+    // In debug builds, keep permissive CORS for easier local development.
+    // In release (production) builds, restrict origins and headers to reduce
+    // the risk of CSRF and cross-origin data exfiltration.
+    let allow_headers = if cfg!(debug_assertions) {
+        HeaderValue::from_static("*")
+    } else {
+        // Adjust this list to the specific headers your frontend actually needs.
+        HeaderValue::from_static("Content-Type, Authorization")
+    };
     let allow_methods = HeaderValue::from_static("GET,PUT,POST,OPTIONS");
-    let allow_origin = HeaderValue::from_static("*");
+    let allow_origin = if cfg!(debug_assertions) {
+        HeaderValue::from_static("*")
+    } else {
+        // Replace this with your actual frontend origin, e.g.:
+        // HeaderValue::from_static("https://app.example.com")
+        HeaderValue::from_static("https://your-frontend.example.com")
+    };
 
     if req.method() == Method::OPTIONS {
         let mut res = Response::new(axum::body::Body::empty());
