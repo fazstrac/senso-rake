@@ -80,6 +80,11 @@ pub async fn start_mqtt_worker(
     let mqtt_pass = std::env::var("MQTT_PASS").ok();
     let mqtt_topic = std::env::var("MQTT_TOPIC").ok();
 
+    let mqtt_flush_interval = std::env::var("MQTT_FLUSH_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(600); // default to 600 seconds    
+
     match (mqtt_host, mqtt_port) {
         // No host or port: default to localhost:1883
         (None, None) => {
@@ -148,7 +153,7 @@ pub async fn start_mqtt_worker(
     let mut all_rows: Vec<mqtt_buffer::ProcessedMsg> = Vec::new();
 
     // Timer for periodic flush and checkpoint
-    let mut interval_flush = time::interval(Duration::from_secs(600));
+    let mut interval_flush = time::interval(Duration::from_secs(mqtt_flush_interval));
 
     let join_handle = tokio::task::spawn(async move {
         loop {

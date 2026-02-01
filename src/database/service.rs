@@ -142,9 +142,16 @@ fn start_db_worker(
             .map_err(|e| anyhow::anyhow!("Failed to open in-memory DuckDB: {}", e)),
     }?;
 
-    let ticker = crossbeam_channel::tick(std::time::Duration::from_secs(5 * 60));
+    let table_update_interval_secs = std::env::var("TABLE_UPDATE_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(600); // default to 600 seconds
+
+
+    let ticker = crossbeam_channel::tick(std::time::Duration::from_secs(table_update_interval_secs));
 
     // Initialize the database
+    // Consider if this could be done externally via eg init scripts
     let res = conn.execute_batch(&format!(
         "BEGIN; {} {} COMMIT; CHECKPOINT;",
         schema::SCHEMA_SQL,
