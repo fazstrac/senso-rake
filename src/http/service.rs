@@ -45,14 +45,12 @@ impl Service for HttpService {
     }
 
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-        let join_handle = start_http_server(
+        start_http_server(
             // self.http_db_handle.clone(), // commented out for now to wait for refactor
             self.registry.clone(),
             self.shutdown_token.clone(),
         )
-        .await;
-
-        join_handle
+        .await
     }
 }
 
@@ -175,7 +173,7 @@ async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response
     let allow_methods = HeaderValue::from_static("GET,PUT,POST,OPTIONS");
     let allow_origin = HeaderValue::from_static("*");
 
-    if req.method() == &Method::OPTIONS {
+    if req.method() == Method::OPTIONS {
         let mut res = Response::new(axum::body::Body::empty());
         *res.status_mut() = StatusCode::NO_CONTENT;
         let headers = res.headers_mut();

@@ -1,5 +1,5 @@
-mod mqtt;
 mod mqtt_buffer;
 mod msg_hash;
+mod service;
 
-pub use mqtt::MqttService;
+pub use service::MqttService;

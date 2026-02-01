@@ -48,14 +48,13 @@ impl Service for MqttService {
     }
 
     async fn start(&self) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-        let join_handle = start_mqtt_worker(
+        start_mqtt_worker(
             self.counter_tot_msg.clone(),
             self.counter_unflushed_msg.clone(),
             self.db.clone(),
             self.shutdown_token.clone(),
         )
-        .await;
-        join_handle
+        .await
     }
 }
 

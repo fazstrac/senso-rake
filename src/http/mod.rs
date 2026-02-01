@@ -1,3 +1,3 @@
-mod server;
+mod service;
 
-pub use server::HttpService;
+pub use service::HttpService;
