@@ -57,30 +57,30 @@ pub async fn run() -> anyhow::Result<()> {
 
     orchestrator.start_all().await?;
 
+    let (shutdown_notify_tx, shutdown_notify_rx) = tokio::sync::oneshot::channel::<()>();
+
     tokio::spawn(async move {
         // let mut sighup = signal(SignalKind::hangup()).unwrap();
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
 
-        loop {
-            tokio::select! {
-                _ = sigterm.recv() => {
-                    info!("Received SIGTERM, initiating shutdown...");
+        tokio::select! {
+            _ = sigterm.recv() => info!("Received SIGTERM, initiating shutdown. Press again to force exit."),
+            _ = sigint.recv() => info!("Received SIGINT, initiating shutdown. Press again to force exit."),
+        }
 
-                    break;
-                }
-                _ = sigint.recv() => {
-                    info!("Received SIGINT, initiating shutdown...");
+        let _ = shutdown_notify_tx.send(());
 
-                    break;
-                }
-            }
+        tokio::select! {
+            _ = sigterm.recv() => info!("Second SIGTERM, exiting immediately."),
+            _ = sigint.recv() => info!("Second SIGINT, exiting immediately."),
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {},
         }
 
         info!("Signal handling task exiting cleanly.");
-    })
-    .await?;
+    });
 
+    let _ = shutdown_notify_rx.await;
     orchestrator.initiate_shutdown().await;
     orchestrator.shutdown_all().await;
 
