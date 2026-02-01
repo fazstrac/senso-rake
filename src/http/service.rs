@@ -9,12 +9,10 @@ use log::{info, error};
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
 
-use axum::body::Body;
 use axum::extract::Extension;
-use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, put};
 use axum::{Json, Router};
 
@@ -103,7 +101,6 @@ fn build_router(
         .route("/mappings", put(put_mapping).get(list_mappings))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(|| async { StatusCode::OK }))
-        .fallback(spa_handler)
         .layer(Extension(registry))
         // .layer(Extension(http_db_handle)) // commented out for now to wait for refactor
         .layer(middleware::from_fn(cors_middleware))
@@ -144,36 +141,6 @@ async fn metrics_handler(Extension(registry): Extension<Arc<Registry>>) -> (Head
         .unwrap_or_default();
     let body = String::from_utf8_lossy(&buffer).to_string();
     (HeaderMap::new(), body)
-}
-
-/// Serve the built single-page app under `ui/dist`. The handler maps `/` to
-/// `ui/dist/index.html` and otherwise attempts to read the requested file.
-/// This is intentionally small — for production you might use a static file
-/// server or embed assets in the binary.
-async fn spa_handler(req: Request<Body>) -> impl IntoResponse {
-    let path = req.uri().path();
-    let rel = match path {
-        "/" => "ui/dist/index.html".to_string(),
-        _ => format!("ui/dist{}", path),
-    };
-
-    match tokio::fs::read(&rel).await {
-        Ok(bytes) => {
-            let content_type = match rel.as_str() {
-                p if p.ends_with(".html") => "text/html; charset=utf-8",
-                p if p.ends_with(".js") => "application/javascript; charset=utf-8",
-                p if p.ends_with(".css") => "text/css; charset=utf-8",
-                p if p.ends_with(".json") => "application/json; charset=utf-8",
-                p if p.ends_with(".wasm") => "application/wasm",
-                _ => "application/octet-stream",
-            };
-
-            let mut headers = HeaderMap::new();
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
-            (headers, bytes).into_response()
-        }
-        Err(_) => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-    }
 }
 
 async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response {
