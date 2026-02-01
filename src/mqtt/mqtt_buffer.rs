@@ -46,6 +46,9 @@ pub fn process_message(json_str: &str) -> ProcessedMsg {
     let ts = parse_time(&raw.time);
 
     ProcessedMsg {
+        // Generate ULID based on timestamp and original JSON bytes
+        // ULID timestamp is in milliseconds to match spec (48 bits) so drop precision on purpose
+        // Possible to improve later with UUIDv7 or similar if needed
         ulid: Some(generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string()),
         ts,
         raw_json: Some(json_str.to_string()),
