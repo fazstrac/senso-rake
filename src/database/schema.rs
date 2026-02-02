@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS temperatures (
     ts TIMESTAMP,
     model VARCHAR,
     id VARCHAR,
-    channel BIGINT,
+    channel VARCHAR,
     temperature_C FLOAT,
     battery_ok BIGINT,
     rssi FLOAT
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS humidities (
     ts TIMESTAMP,
     model VARCHAR,
     id VARCHAR,
-    channel BIGINT,
+    channel VARCHAR,
     humidity FLOAT,
     battery_ok BIGINT,
     rssi FLOAT
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS pressures (
     ts TIMESTAMP,
     model VARCHAR,
     id VARCHAR,
-    channel BIGINT,
+    channel VARCHAR,
     pressure_kPa FLOAT,
     battery_ok BIGINT,
     rssi FLOAT
@@ -184,7 +184,7 @@ SELECT DISTINCT
   ts,
   raw_json->>'model',
   raw_json->>'id',
-  (raw_json->>'channel')::int,
+  (raw_json->>'channel'),
   (raw_json->>'temperature_C')::float,
   (raw_json->>'battery_ok')::int,
   (raw_json->>'rssi')::float
@@ -204,7 +204,7 @@ SELECT DISTINCT
   ts,
   raw_json->>'model',
   raw_json->>'id',
-  (raw_json->>'channel')::int,
+  (raw_json->>'channel'),
   (raw_json->>'humidity')::float,
   (raw_json->>'battery_ok')::int,
   (raw_json->>'rssi')::float
@@ -224,7 +224,7 @@ SELECT DISTINCT
   ts,
   raw_json->>'model',
   raw_json->>'id',
-  (raw_json->>'channel')::int,
+  (raw_json->>'channel'),
   (raw_json->>'pressure_kPa')::float,
   (raw_json->>'battery_ok')::int,
   (raw_json->>'rssi')::float
