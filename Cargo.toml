@@ -5,22 +5,22 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.7"
-duckdb = { version = "1.4.3", features = ["appender-arrow", "bundled", "vtab-arrow"] }
+duckdb = { version = "1.4.4", features = ["appender-arrow", "bundled", "vtab-arrow"] }
 prometheus = "0.14.0"
 rumqttc = "0.25.1"
 tokio = { version = "1.48.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
-http = "0.2"
+http = "1.4"
 chrono = { version = "0.4", features = ["serde"] }
 crossbeam-channel = "0.5.15"
-tower = "0.5.2"
 async-trait = "0.1.89"
 ulid = "1.2.1"
 sha2 = "0.10.9"
 log = "0.4.29"
 env_logger = "0.11.8"
+arrow-json = "56.2.0"
 
 [profile.dev]
 opt-level = 0
