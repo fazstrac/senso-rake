@@ -54,18 +54,18 @@ impl Service for DbService {
 }
 
 pub enum DbCommand {
-    // Query(String),
+    Query(String),
     // ExecuteBatch(String),
     InsertBatch(RecordBatch, String),
 }
 
-struct DbJob {
+pub(crate) struct DbJob {
     command: DbCommand,
     response: tokio::sync::oneshot::Sender<anyhow::Result<DbResponse>>,
 }
 
 pub enum DbResponse {
-    // QueryResult,
+    QueryResult(String),
     // ExecuteBatchResult,
     InsertResult,
 }
@@ -76,7 +76,7 @@ pub struct DbHandle {
 }
 
 impl DbHandle {
-    fn new(tx: Sender<DbJob>) -> Self {
+    pub(crate) fn new(tx: Sender<DbJob>) -> Self {
         DbHandle { tx }
     }
 
@@ -110,19 +110,22 @@ impl DbHandle {
     //     Ok(())
     // }
 
-    // pub async fn query(&self, query: String) -> anyhow::Result<()> {
-    //     let (tx, rx) = oneshot::channel();
-    //     let job = DbJob {
-    //         command: DbCommand::Query(query),
-    //         response: tx,
-    //     };
-    //     self.tx
-    //         .send(job)
-    //         .map_err(|e| anyhow::anyhow!("DB job send error: {}", e))?;
-    //     rx.await
-    //         .map_err(|e| anyhow::anyhow!("DB job response error: {}", e))??;
-    //     Ok(())
-    // }
+    pub async fn query(&self, query: String) -> anyhow::Result<String> {
+        let (tx, rx) = oneshot::channel();
+        let job = DbJob {
+            command: DbCommand::Query(query),
+            response: tx,
+        };
+        self.tx
+            .send(job)
+            .map_err(|e| anyhow::anyhow!("DB job send error: {}", e))?;
+
+        match rx.await
+            .map_err(|e| anyhow::anyhow!("DB job response error: {}", e))?? {
+            DbResponse::QueryResult(json) => Ok(json),
+            _ => Err(anyhow::anyhow!("Unexpected DB response")),
+        }
+    }
 }
 
 // Start the DB worker thread which owns a DuckDB connection and executes jobs.
@@ -246,13 +249,33 @@ fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
                 }
             })();
             let _ = job.response.send(res.map(|_| DbResponse::InsertResult));
-        } // DbCommand::Query(sql) => {
-          //     let res = conn.execute(&sql, []);
-          //     let _ = job.response.send(
-          //         res.map(|_| DbResponse::QueryResult)
-          //             .map_err(|e| anyhow::anyhow!(e)),
-          //     );
-          // }
+        } 
+        DbCommand::Query(sql) => {
+            use arrow_json::writer::ArrayWriter;
+
+            let res: Result<String> = (|| {
+                let mut stmt = conn.prepare(&sql)?;
+
+                let arrow = stmt.query_arrow([])?;
+                let batches: Vec<RecordBatch> = arrow.collect();
+
+                let mut buf = Vec::new();
+                {
+                    let mut writer = ArrayWriter::new(&mut buf);
+                    for batch in batches {
+                        writer.write(&batch)?;
+                    }
+                    writer.finish()?;
+                }
+
+                let json_bytes = String::from_utf8(buf)?;
+                Ok(json_bytes)
+            })();
+            let _ = job.response.send(
+                res.map(|json| DbResponse::QueryResult(json))
+                    .map_err(|e| anyhow::anyhow!(e)),
+            );
+          }
     }
     Ok(())
 }
@@ -285,6 +308,10 @@ mod tests {
                     DbCommand::InsertBatch(_batch, _table) => {
                         let _ = job.response.send(Ok(DbResponse::InsertResult));
                     }
+                    DbCommand::Query(_sql) => {
+                        let _ = job.response.send(Ok(DbResponse::QueryResult("[]".to_string())));
+                    }
+
                 }
             }
         });
@@ -294,6 +321,102 @@ mod tests {
         assert!(res.is_ok(), "insert_batch should succeed");
     }
 
-    
+    #[tokio::test]
+    async fn test_query_returns_json() {
+        let (tx, rx) = unbounded::<DbJob>();
+        let handle = DbHandle::new(tx.clone());
+
+        // Spawn a real worker thread with an in-memory database
+        thread::spawn(move || {
+            let conn = Connection::open_in_memory().expect("Failed to open in-memory DB");
+
+            // Create a simple test table
+            conn.execute(
+                "CREATE TABLE test (id INTEGER, name VARCHAR)",
+                [],
+            )
+            .expect("Failed to create table");
+
+            // Insert test data
+            conn.execute(
+                "INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob')",
+                [],
+            )
+            .expect("Failed to insert data");
+
+            // Process jobs
+            loop {
+                match rx.recv() {
+                    Ok(job) => {
+                        match job.command {
+                            DbCommand::Query(sql) => {
+                                use arrow_json::writer::ArrayWriter;
+
+                                let res: Result<String> = (|| {
+                                    let mut stmt = conn.prepare(&sql)?;
+                                    let arrow = stmt.query_arrow([])?;
+                                    let batches: Vec<RecordBatch> = arrow.collect();
+
+                                    let mut buf = Vec::new();
+                                    {
+                                        let mut writer = ArrayWriter::new(&mut buf);
+                                        for batch in batches {
+                                            writer.write(&batch)?;
+                                        }
+                                        writer.finish()?;
+                                    }
+
+                                    let json_string = String::from_utf8(buf)?;
+                                    Ok(json_string)
+                                })();
+
+                                let _ = job.response.send(
+                                    res.map(|json| DbResponse::QueryResult(json))
+                                        .map_err(|e| anyhow::anyhow!(e)),
+                                );
+                            }
+                            _ => {
+                                let _ = job.response.send(Err(anyhow::anyhow!("Unsupported command")));
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Channel closed, exit
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Query the data
+        let json_result = handle
+            .query("SELECT * FROM test ORDER BY id".to_string())
+            .await;
+
+        assert!(json_result.is_ok(), "query should succeed");
+
+        let json_str = json_result.unwrap();
+        assert!(!json_str.is_empty(), "JSON result should not be empty");
+
+        // Parse and verify the JSON
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("Failed to parse JSON result");
+
+        let records = parsed
+            .as_array()
+            .expect("JSON result should be an array");
+
+        assert_eq!(records.len(), 2, "Should have 2 records");
+
+        // Verify first record
+        let first = &records[0];
+        assert_eq!(first["id"], 1);
+        assert_eq!(first["name"], "Alice");
+
+        // Verify second record
+        let second = &records[1];
+        assert_eq!(second["id"], 2);
+        assert_eq!(second["name"], "Bob");
+    }
 
 }
