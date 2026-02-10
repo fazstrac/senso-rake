@@ -46,7 +46,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     // Build HTTP service
     let http_service = http::HttpService::new(
-        // db_handle.clone();  // commented out for now to wait for refactor
+        db_handle.clone(),
         registry.clone(),
         shutdown_token.clone(),
     );
