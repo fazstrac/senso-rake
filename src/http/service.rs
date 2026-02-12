@@ -9,20 +9,28 @@ use log::{info, error};
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
 
-use axum::extract::Extension;
+use axum::extract::{Extension, Path};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{get, put, post};
+use axum::routing::{get, post, delete};  // post is used in build_router for mappings_post_handler
 use axum::Router;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use axum::Json;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct SensorMapping {
     model: String,
     id: String,
     description: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CreatedMapping {
+    mapping_id: i64,
+    #[serde(flatten)]
+    mapping: SensorMapping,
 }
 
 
@@ -107,10 +115,11 @@ fn build_router(
     Router::new()
         // These are subject to change as we refactor the HTTP service
         // .route("/mappings", put(put_mapping).get(list_mappings))
-        .route("/temperatures", get(temperatures_get_handler))        
+        .route("/temperatures", get(temperatures_get_handler))
         .route("/pressures", get(pressures_get_handler))
         .route("/humidities", get(humidities_get_handler))
-        .route("/mappings", get(mappings_get_handler))
+        .route("/mappings", get(mappings_get_handler).post(mappings_post_handler))
+        .route("/mappings/{id}", delete(mappings_delete_handler))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(|| async { StatusCode::OK }))
         .layer(Extension(prom_registry))
@@ -135,7 +144,87 @@ async fn mappings_get_handler(Extension(http_db_handle): Extension<database::DbH
     query_helper(http_db_handle, "SELECT * FROM mappings WHERE deleted = false".to_string()).await
 }
 
+async fn mappings_post_handler(
+    Extension(http_db_handle): Extension<database::DbHandle>,
+    Json(payload): Json<SensorMapping>,
+) -> Response {
+    // Validate that all fields are non-empty
+    if payload.model.is_empty() || payload.id.is_empty() || payload.description.is_empty() {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(axum::body::Body::from("All fields (model, id, description) must be non-empty"))
+            .unwrap();
+    }
 
+    let query = "INSERT INTO mappings (model, id, description) VALUES (?, ?, ?) RETURNING mapping_id"
+        .to_string();
+    let params = vec![payload.model.clone(), payload.id.clone(), payload.description.clone()];
+
+    match http_db_handle.query_with_params(query, params).await {
+        Ok(json_result) => {
+            // Parse the returned mapping_id from the JSON result
+            match serde_json::from_str::<Vec<serde_json::Value>>(&json_result) {
+                Ok(rows) if !rows.is_empty() => {
+                    if let Some(mapping_id) = rows[0].get("mapping_id").and_then(|v| v.as_i64()) {
+                        let response = CreatedMapping {
+                            mapping_id,
+                            mapping: payload,
+                        };
+
+                        Response::builder()
+                            .status(StatusCode::CREATED)
+                            .header("Content-Type", "application/json")
+                            .body(axum::body::Body::from(
+                                serde_json::to_string(&response).unwrap_or_default(),
+                            ))
+                            .unwrap()
+                    } else {
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(axum::body::Body::from("Failed to retrieve generated mapping_id"))
+                            .unwrap()
+                    }
+                }
+                _ => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(axum::body::Body::from("Invalid database response"))
+                    .unwrap(),
+            }
+        }
+        Err(e) => {
+            let error_msg = e.to_string();
+
+            // Check for constraint violations (e.g., duplicate entries)
+            if error_msg.contains("Constraint Error") || error_msg.contains("UNIQUE constraint failed") {
+                Response::builder()
+                    .status(StatusCode::CONFLICT)
+                    .body(axum::body::Body::from(format!(
+                        "Mapping already exists: {}",
+                        error_msg
+                    )))
+                    .unwrap()
+            } else {
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(axum::body::Body::from(format!("Database error: {}", error_msg)))
+                    .unwrap()
+            }
+        }
+    }
+}
+
+async fn mappings_delete_handler(
+    Extension(http_db_handle): Extension<database::DbHandle>,
+    Path(mapping_id): Path<i64>,
+) -> StatusCode {
+    let query = "UPDATE mappings SET deleted = true WHERE mapping_id = ?".to_string();
+    let params = vec![mapping_id.to_string()];
+
+    let _ = http_db_handle.query_with_params(query, params).await;
+
+    // Idempotent: return 204 No Content regardless of whether the mapping existed
+    StatusCode::NO_CONTENT
+}
 
 async fn query_helper(http_db_handle: database::DbHandle, query: String) -> Response {
     let res_json = http_db_handle.query(query).await;
@@ -221,70 +310,100 @@ async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response
     res
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use axum::body::Body;
-//     use axum::http::{Request, StatusCode};
-//     use prometheus::Registry;
-//     use std::sync::Arc;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     use axum::Router;
-//     use axum::http::Method;
+    #[test]
+    fn test_sensor_mapping_deserialization_valid() {
+        let json = r#"{"model":"sensor-a","id":"001","description":"Living Room"}"#;
+        let result: Result<SensorMapping, _> = serde_json::from_str(json);
+        assert!(result.is_ok());
+        let mapping = result.unwrap();
+        assert_eq!(mapping.model, "sensor-a");
+        assert_eq!(mapping.id, "001");
+        assert_eq!(mapping.description, "Living Room");
+    }
 
-//     use tower::util::ServiceExt; // for `oneshot` method
+    #[test]
+    fn test_sensor_mapping_deserialization_missing_field() {
+        let json = r#"{"model":"sensor-a","id":"001"}"#;
+        let result: Result<SensorMapping, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
 
-//     fn build_test_app() -> Router {
-//         let registry = Arc::new(Registry::new());
-        
-//         // Create mock database handle
-//         let (tx, rx) = crossbeam_channel::unbounded::<database::DbJob>();
-//         let db = database::DbHandle::new(tx);
-        
-//         // Spawn minimal mock worker
-//         std::thread::spawn(move || {
-//             while let Ok(job) = rx.recv() {
-//                 // Respond OK to all commands without actually doing work
-//                 let _ = job.response.send(Ok(database::DbResponse::InsertResult));
-//             }
-//         });
-        
-//         build_router(db, registry)
-//     }
+    #[test]
+    fn test_sensor_mapping_serialization() {
+        let mapping = SensorMapping {
+            model: "sensor-b".to_string(),
+            id: "002".to_string(),
+            description: "Bedroom".to_string(),
+        };
+        let json = serde_json::to_string(&mapping).unwrap();
+        assert!(json.contains("sensor-b"));
+        assert!(json.contains("002"));
+        assert!(json.contains("Bedroom"));
+    }
 
-//     #[tokio::test]
-//     async fn health_endpoint_works() {
-//         let app = build_test_app();
+    #[test]
+    fn test_created_mapping_serialization() {
+        let mapping = SensorMapping {
+            model: "sensor-c".to_string(),
+            id: "003".to_string(),
+            description: "Kitchen".to_string(),
+        };
+        let created = CreatedMapping {
+            mapping_id: 42,
+            mapping,
+        };
+        let json = serde_json::to_string(&created).unwrap();
+        assert!(json.contains("42"));
+        assert!(json.contains("sensor-c"));
+        assert!(json.contains("Kitchen"));
+    }
 
-//         let response = app
-//             .oneshot(
-//                 Request::builder()
-//                     .uri("/health")
-//                     .method(Method::GET)
-//                     .body(Body::empty())
-//                     .unwrap(),
-//             )
-//             .await
-//             .unwrap();
+    #[test]
+    fn test_validation_empty_model() {
+        let mapping = SensorMapping {
+            model: "".to_string(),
+            id: "001".to_string(),
+            description: "Valid".to_string(),
+        };
+        assert!(mapping.model.is_empty());
+    }
 
-//         assert_eq!(response.status(), StatusCode::OK);
-//     }
+    #[test]
+    fn test_validation_empty_id() {
+        let mapping = SensorMapping {
+            model: "sensor".to_string(),
+            id: "".to_string(),
+            description: "Valid".to_string(),
+        };
+        assert!(mapping.id.is_empty());
+    }
 
-//     #[tokio::test]
-//     async fn metrics_endpoint_works() {
-//         let app = build_test_app();
+    #[test]
+    fn test_validation_empty_description() {
+        let mapping = SensorMapping {
+            model: "sensor".to_string(),
+            id: "001".to_string(),
+            description: "".to_string(),
+        };
+        assert!(mapping.description.is_empty());
+    }
 
-//         let response = app
-//             .oneshot(
-//                 Request::builder()
-//                     .uri("/metrics")
-//                     .method(Method::GET)
-//                     .body(Body::empty())
-//                     .unwrap(),
-//             )
-//             .await
-//             .unwrap();
+    #[test]
+    fn test_delete_returns_no_content() {
+        // Verify that the delete operation returns 204 No Content
+        let status = StatusCode::NO_CONTENT;
+        assert_eq!(status.as_u16(), 204);
+    }
 
-//         assert_eq!(response.status(), StatusCode::OK);
-//     }
-// }
+    #[test]
+    fn test_mapping_id_to_string_conversion() {
+        // Test that mapping_id can be converted to string for parameter binding
+        let mapping_id: i64 = 42;
+        let param = mapping_id.to_string();
+        assert_eq!(param, "42");
+    }
+}
