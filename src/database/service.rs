@@ -55,13 +55,14 @@ impl Service for DbService {
 
 pub enum DbCommand {
     Query(String),
+    QueryWithParams(String, Vec<String>),
     // ExecuteBatch(String),
     InsertBatch(RecordBatch, String),
 }
 
-pub(crate) struct DbJob {
-    command: DbCommand,
-    response: tokio::sync::oneshot::Sender<anyhow::Result<DbResponse>>,
+pub struct DbJob {
+    pub command: DbCommand,
+    pub response: tokio::sync::oneshot::Sender<anyhow::Result<DbResponse>>,
 }
 
 pub enum DbResponse {
@@ -114,6 +115,23 @@ impl DbHandle {
         let (tx, rx) = oneshot::channel();
         let job = DbJob {
             command: DbCommand::Query(query),
+            response: tx,
+        };
+        self.tx
+            .send(job)
+            .map_err(|e| anyhow::anyhow!("DB job send error: {}", e))?;
+
+        match rx.await
+            .map_err(|e| anyhow::anyhow!("DB job response error: {}", e))?? {
+            DbResponse::QueryResult(json) => Ok(json),
+            _ => Err(anyhow::anyhow!("Unexpected DB response")),
+        }
+    }
+
+    pub async fn query_with_params(&self, query: String, params: Vec<String>) -> anyhow::Result<String> {
+        let (tx, rx) = oneshot::channel();
+        let job = DbJob {
+            command: DbCommand::QueryWithParams(query, params),
             response: tx,
         };
         self.tx
@@ -227,7 +245,7 @@ fn start_db_worker(
 }
 
 fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
-    match job.command {        
+    match job.command {
         // DbCommand::ExecuteBatch(sql) => {
         //     let res = conn.execute_batch(&sql);
         //     let _ = job.response.send(
@@ -249,7 +267,7 @@ fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
                 }
             })();
             let _ = job.response.send(res.map(|_| DbResponse::InsertResult));
-        } 
+        }
         DbCommand::Query(sql) => {
             use arrow_json::writer::ArrayWriter;
 
@@ -275,7 +293,49 @@ fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
                 res.map(|json| DbResponse::QueryResult(json))
                     .map_err(|e| anyhow::anyhow!(e)),
             );
-          }
+        }
+        DbCommand::QueryWithParams(sql, params) => {
+            use arrow_json::writer::ArrayWriter;
+
+            let res: Result<String> = (|| {
+                let mut stmt = conn.prepare(&sql)?;
+
+                // Pass parameters as array. DuckDB Rust bindings require fixed-size arrays or slices
+                let arrow = match params.len() {
+                    1 => {
+                        let p: [&dyn duckdb::ToSql; 1] = [&params[0]];
+                        stmt.query_arrow(&p)?
+                    }
+                    2 => {
+                        let p: [&dyn duckdb::ToSql; 2] = [&params[0], &params[1]];
+                        stmt.query_arrow(&p)?
+                    }
+                    3 => {
+                        let p: [&dyn duckdb::ToSql; 3] = [&params[0], &params[1], &params[2]];
+                        stmt.query_arrow(&p)?
+                    }
+                    _ => return Err(anyhow::anyhow!("Unsupported parameter count: {}", params.len())),
+                };
+
+                let batches: Vec<RecordBatch> = arrow.collect();
+
+                let mut buf = Vec::new();
+                {
+                    let mut writer = ArrayWriter::new(&mut buf);
+                    for batch in batches {
+                        writer.write(&batch)?;
+                    }
+                    writer.finish()?;
+                }
+
+                let json_bytes = String::from_utf8(buf)?;
+                Ok(json_bytes)
+            })();
+            let _ = job.response.send(
+                res.map(|json| DbResponse::QueryResult(json))
+                    .map_err(|e| anyhow::anyhow!(e)),
+            );
+        }
     }
     Ok(())
 }
@@ -298,12 +358,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_insert_batch_roundtrip() {
-        let (tx, rx) = unbounded::<DbJob>();
+        let (tx, _rx) = unbounded::<DbJob>();
         let handle = DbHandle::new(tx.clone());
 
         // Spawn a mock worker thread that receives one job and replies OK
         thread::spawn(move || {
-            if let Ok(job) = rx.recv() {
+            if let Ok(job) = _rx.recv() {
                 match job.command {
                     DbCommand::InsertBatch(_batch, _table) => {
                         let _ = job.response.send(Ok(DbResponse::InsertResult));
@@ -311,7 +371,9 @@ mod tests {
                     DbCommand::Query(_sql) => {
                         let _ = job.response.send(Ok(DbResponse::QueryResult("[]".to_string())));
                     }
-
+                    DbCommand::QueryWithParams(_sql, _params) => {
+                        let _ = job.response.send(Ok(DbResponse::QueryResult("[]".to_string())));
+                    }
                 }
             }
         });
@@ -355,6 +417,48 @@ mod tests {
                                 let res: Result<String> = (|| {
                                     let mut stmt = conn.prepare(&sql)?;
                                     let arrow = stmt.query_arrow([])?;
+                                    let batches: Vec<RecordBatch> = arrow.collect();
+
+                                    let mut buf = Vec::new();
+                                    {
+                                        let mut writer = ArrayWriter::new(&mut buf);
+                                        for batch in batches {
+                                            writer.write(&batch)?;
+                                        }
+                                        writer.finish()?;
+                                    }
+
+                                    let json_string = String::from_utf8(buf)?;
+                                    Ok(json_string)
+                                })();
+
+                                let _ = job.response.send(
+                                    res.map(|json| DbResponse::QueryResult(json))
+                                        .map_err(|e| anyhow::anyhow!(e)),
+                                );
+                            }
+                            DbCommand::QueryWithParams(sql, params) => {
+                                use arrow_json::writer::ArrayWriter;
+
+                                let res: Result<String> = (|| {
+                                    let mut stmt = conn.prepare(&sql)?;
+
+                                    let arrow = match params.len() {
+                                        1 => {
+                                            let p: [&dyn duckdb::ToSql; 1] = [&params[0]];
+                                            stmt.query_arrow(&p)?
+                                        }
+                                        2 => {
+                                            let p: [&dyn duckdb::ToSql; 2] = [&params[0], &params[1]];
+                                            stmt.query_arrow(&p)?
+                                        }
+                                        3 => {
+                                            let p: [&dyn duckdb::ToSql; 3] = [&params[0], &params[1], &params[2]];
+                                            stmt.query_arrow(&p)?
+                                        }
+                                        _ => return Err(anyhow::anyhow!("Unsupported parameter count: {}", params.len())),
+                                    };
+
                                     let batches: Vec<RecordBatch> = arrow.collect();
 
                                     let mut buf = Vec::new();
