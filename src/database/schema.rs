@@ -34,7 +34,11 @@ CREATE TABLE IF NOT EXISTS pressures (
     battery_ok BIGINT,
     rssi FLOAT
 );
+
+CREATE SEQUENCE IF NOT EXISTS mapping_id_seq START 1;
+
 CREATE TABLE IF NOT EXISTS mappings (
+    mapping_id BIGINT PRIMARY KEY DEFAULT nextval('mapping_id_seq'),
     model VARCHAR,
     id VARCHAR,
     description VARCHAR,
@@ -127,6 +131,7 @@ WITH CTE AS (
     GROUP BY MODEL, ID
 )
 SELECT
+    CTE.ULID,
     MODEL,
     ID,
     TEMPERATURE_C,
@@ -144,6 +149,7 @@ WITH CTE AS (
     GROUP BY MODEL, ID
 )
 SELECT
+    CTE.ULID,
     MODEL,
     ID,
     PRESSURE_kPa,
@@ -161,6 +167,7 @@ WITH CTE AS (
     GROUP BY MODEL, ID
 )
 SELECT
+    CTE.ULID,
     MODEL,
     ID,
     HUMIDITY,
