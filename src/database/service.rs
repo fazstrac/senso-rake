@@ -81,6 +81,11 @@ impl DbHandle {
         DbHandle { tx }
     }
 
+    #[cfg(test)]
+    pub fn _test_new(tx: Sender<DbJob>) -> Self {
+        DbHandle { tx }
+    }
+
     pub async fn insert_batch(&self, batch: RecordBatch, table: &str) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         let job = DbJob {
