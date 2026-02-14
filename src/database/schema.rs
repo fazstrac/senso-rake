@@ -197,9 +197,11 @@ SELECT
     cte.id,
     cte.last_seen,
     cte.latest_ulid,
-    mappings.description    
+    mappings.description,
+    mappings.validity_start,
+    mappings.deleted
 FROM cte 
-LEFT JOIN mappings ON mappings.model = cte.model AND mappings.id = cte.id AND mappings.deleted = false
+LEFT JOIN mappings ON mappings.model = cte.model AND mappings.id = cte.id
 ORDER BY mappings.mapping_id;
 "#;
 
