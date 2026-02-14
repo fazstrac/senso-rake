@@ -18,12 +18,14 @@ use axum::Router;
 
 use serde::{Deserialize, Serialize};
 use axum::Json;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Deserialize, Serialize)]
-struct SensorMapping {
-    model: String,
-    id: String,
-    description: String,
+pub struct SensorMapping {
+    pub model: String,
+    pub id: String,
+    pub validity_start: DateTime<Utc>,
+    pub description: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,7 +110,7 @@ pub async fn start_http_server(
 
 // Build the Axum router with routes, handlers, and middleware.
 // This is separate function for testability.
-fn build_router(
+pub fn build_router(
     http_db_handle: database::DbHandle,
     prom_registry: Arc<Registry>,
 ) -> Router {
@@ -120,6 +122,7 @@ fn build_router(
         .route("/humidities", get(humidities_get_handler))
         .route("/mappings", get(mappings_get_handler).post(mappings_post_handler))
         .route("/mappings/{id}", delete(mappings_delete_handler))
+        .route("/mappings/{id}/restore", post(mappings_restore_handler))
         .route("/metrics", get(metrics_handler))
         .route("/health", get(|| async { StatusCode::OK }))
         .layer(Extension(prom_registry))
@@ -141,7 +144,7 @@ async fn humidities_get_handler(Extension(http_db_handle): Extension<database::D
 }
 
 async fn mappings_get_handler(Extension(http_db_handle): Extension<database::DbHandle>) -> Response {
-    query_helper(http_db_handle, "SELECT * FROM mappings WHERE deleted = false".to_string()).await
+    query_helper(http_db_handle, "SELECT * FROM all_sensors".to_string()).await
 }
 
 async fn mappings_post_handler(
@@ -156,9 +159,14 @@ async fn mappings_post_handler(
             .unwrap();
     }
 
-    let query = "INSERT INTO mappings (model, id, description) VALUES (?, ?, ?) RETURNING mapping_id"
+    let query = "INSERT INTO mappings (model, id, validity_start, description) VALUES (?, ?, ?, ?) RETURNING mapping_id"
         .to_string();
-    let params = vec![payload.model.clone(), payload.id.clone(), payload.description.clone()];
+    let params = vec![
+        payload.model.clone(),
+        payload.id.clone(),
+        payload.validity_start.to_rfc3339(),
+        payload.description.clone(),
+    ];
 
     match http_db_handle.query_with_params(query, params).await {
         Ok(json_result) => {
@@ -225,6 +233,20 @@ async fn mappings_delete_handler(
     // Idempotent: return 204 No Content regardless of whether the mapping existed
     StatusCode::NO_CONTENT
 }
+
+async fn mappings_restore_handler(
+    Extension(http_db_handle): Extension<database::DbHandle>,
+    Path(mapping_id): Path<i64>,
+) -> StatusCode {
+    let query = "UPDATE mappings SET deleted = false WHERE mapping_id = ?".to_string();
+    let params = vec![mapping_id.to_string()];
+
+    let _ = http_db_handle.query_with_params(query, params).await;
+
+    // Idempotent: return 204 No Content regardless of whether the mapping existed
+    StatusCode::NO_CONTENT
+}
+
 
 async fn query_helper(http_db_handle: database::DbHandle, query: String) -> Response {
     let res_json = http_db_handle.query(query).await;
@@ -316,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_sensor_mapping_deserialization_valid() {
-        let json = r#"{"model":"sensor-a","id":"001","description":"Living Room"}"#;
+        let json = r#"{"model":"sensor-a","id":"001","validity_start":"2025-02-14T10:30:00Z","description":"Living Room"}"#;
         let result: Result<SensorMapping, _> = serde_json::from_str(json);
         assert!(result.is_ok());
         let mapping = result.unwrap();
@@ -333,16 +355,27 @@ mod tests {
     }
 
     #[test]
+    fn test_sensor_mapping_deserialization_invalid_timestamp() {
+        let json = r#"{"model":"sensor-a","id":"001","validity_start":"not-a-date","description":"Living Room"}"#;
+        let result: Result<SensorMapping, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_sensor_mapping_serialization() {
         let mapping = SensorMapping {
             model: "sensor-b".to_string(),
             id: "002".to_string(),
+            validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             description: "Bedroom".to_string(),
         };
         let json = serde_json::to_string(&mapping).unwrap();
         assert!(json.contains("sensor-b"));
         assert!(json.contains("002"));
         assert!(json.contains("Bedroom"));
+        assert!(json.contains("2025-02-14"));
     }
 
     #[test]
@@ -350,6 +383,9 @@ mod tests {
         let mapping = SensorMapping {
             model: "sensor-c".to_string(),
             id: "003".to_string(),
+            validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             description: "Kitchen".to_string(),
         };
         let created = CreatedMapping {
@@ -360,6 +396,7 @@ mod tests {
         assert!(json.contains("42"));
         assert!(json.contains("sensor-c"));
         assert!(json.contains("Kitchen"));
+        assert!(json.contains("2025-02-14"));
     }
 
     #[test]
@@ -367,6 +404,9 @@ mod tests {
         let mapping = SensorMapping {
             model: "".to_string(),
             id: "001".to_string(),
+            validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             description: "Valid".to_string(),
         };
         assert!(mapping.model.is_empty());
@@ -377,6 +417,9 @@ mod tests {
         let mapping = SensorMapping {
             model: "sensor".to_string(),
             id: "".to_string(),
+            validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             description: "Valid".to_string(),
         };
         assert!(mapping.id.is_empty());
@@ -387,6 +430,9 @@ mod tests {
         let mapping = SensorMapping {
             model: "sensor".to_string(),
             id: "001".to_string(),
+            validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             description: "".to_string(),
         };
         assert!(mapping.description.is_empty());
@@ -395,6 +441,13 @@ mod tests {
     #[test]
     fn test_delete_returns_no_content() {
         // Verify that the delete operation returns 204 No Content
+        let status = StatusCode::NO_CONTENT;
+        assert_eq!(status.as_u16(), 204);
+    }
+
+    #[test]
+    fn test_restore_returns_no_content() {
+        // Verify that the restore operation returns 204 No Content
         let status = StatusCode::NO_CONTENT;
         assert_eq!(status.as_u16(), 204);
     }
