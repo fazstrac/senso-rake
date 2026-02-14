@@ -1,29 +1,142 @@
-async function listMappings(){
-  const res = await fetch('/mapping');
-  if(!res.ok){ console.error('failed to load mappings'); return }
-  const data = await res.json();
-  const tbody = document.querySelector('#mappingsTable tbody')!;
-  tbody.innerHTML = '';
-  (data as any[]).forEach(m=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${m.manufacturer}</td><td>${m.sensor_id}</td><td>${m.name}</td>`;
-    tbody.appendChild(tr);
-  });
+/**
+ * Main entry point for the SensoRake UI
+ */
+
+import { apiClient } from './api';
+import { SensorListUI, CreateMappingFormUI } from './ui';
+import './style.css';
+
+const sensorListUI = new SensorListUI('sensor-list');
+const createMappingUI = new CreateMappingFormUI('create-mapping-form');
+
+let currentSensors: typeof import('./types').SensorWithMapping[] = [];
+
+/**
+ * Load and display all sensors
+ */
+async function loadSensors(): Promise<void> {
+  try {
+    const sensors = await apiClient.getSensors();
+    currentSensors = sensors;
+    sensorListUI.render(sensors);
+  } catch (error) {
+    console.error('Failed to load sensors:', error);
+    document.getElementById('sensor-list')!.innerHTML =
+      '<p class="error">Failed to load sensors. Check the console for details.</p>';
+  }
 }
 
-document.getElementById('mappingForm')!.addEventListener('submit', async (e)=>{
+/**
+ * Handle creating a new mapping
+ */
+async function handleCreateMapping(e: Event): Promise<void> {
   e.preventDefault();
-  const sensor_id = (document.getElementById('sensor_id') as HTMLInputElement).value;
-  const manufacturer = (document.getElementById('manufacturer') as HTMLInputElement).value;
-  const name = (document.getElementById('name') as HTMLInputElement).value;
-  const payload = { sensor_id, manufacturer, name };
-  const res = await fetch('/mapping', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if(res.status===201){
-    await listMappings();
-    (document.getElementById('mappingForm') as HTMLFormElement).reset();
-  } else {
-    alert('Failed to save mapping');
-  }
-});
 
-listMappings();
+  const formData = createMappingUI.getFormData();
+  if (!formData) {
+    alert('Please fill in all required fields');
+    return;
+  }
+
+  try {
+    await apiClient.createMapping(
+      formData.model,
+      formData.id,
+      formData.validity_start,
+      formData.description
+    );
+    createMappingUI.resetForm();
+    await loadSensors();
+  } catch (error) {
+    console.error('Failed to create mapping:', error);
+    alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Handle deleting a mapping
+ */
+async function handleDeleteMapping(mappingId: number): Promise<void> {
+  if (!confirm('Delete this mapping?')) {
+    return;
+  }
+
+  try {
+    await apiClient.deleteMapping(mappingId);
+    await loadSensors();
+  } catch (error) {
+    console.error('Failed to delete mapping:', error);
+    alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Handle restoring a mapping
+ */
+async function handleRestoreMapping(mappingId: number): Promise<void> {
+  try {
+    await apiClient.restoreMapping(mappingId);
+    await loadSensors();
+  } catch (error) {
+    console.error('Failed to restore mapping:', error);
+    alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Set up event listeners
+ */
+function setupEventListeners(): void {
+  const createForm = document.querySelector('.create-mapping-form');
+  if (createForm) {
+    createForm.addEventListener('submit', handleCreateMapping);
+  }
+
+  const sensorListContainer = document.getElementById('sensor-list');
+  if (sensorListContainer) {
+    sensorListContainer.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+
+      if (target.dataset.action === 'select-sensor') {
+        const model = target.dataset.model || '';
+        const sensorId = target.dataset.sensorId || '';
+        if (model && sensorId) {
+          createMappingUI.selectSensor(model, sensorId);
+          // Scroll the form into view
+          const formElement = document.querySelector('.create-mapping-form');
+          if (formElement) {
+            formElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+      }
+
+      if (target.dataset.action === 'delete') {
+        const mappingId = parseInt(target.dataset.mappingId || '0');
+        if (mappingId > 0) {
+          handleDeleteMapping(mappingId);
+        }
+      }
+
+      if (target.dataset.action === 'restore') {
+        const mappingId = parseInt(target.dataset.mappingId || '0');
+        if (mappingId > 0) {
+          handleRestoreMapping(mappingId);
+        }
+      }
+    });
+  }
+}
+
+/**
+ * Initialize the UI
+ */
+async function init(): Promise<void> {
+  createMappingUI.render();
+  setupEventListeners();
+  await loadSensors();
+}
+
+// Start the app
+init().catch((error) => {
+  console.error('Failed to initialize app:', error);
+});
