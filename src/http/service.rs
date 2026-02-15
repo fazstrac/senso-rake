@@ -1,24 +1,24 @@
 // HTTP handlers for the service. This module sets up the Axum
 // router with routes, handlers, and middleware.
+use crate::database;
 use crate::service::{Service, ServiceType};
 use crate::shutdown_token::ShutdownToken;
-use crate::database;
 
-use log::{info, error};
+use log::{error, info};
 
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::{Extension, Path};
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{get, post, delete};  // post is used in build_router for mappings_post_handler
-use axum::Router;
+use axum::routing::{delete, get, post}; // post is used in build_router for mappings_post_handler
 
-use serde::{Deserialize, Serialize};
 use axum::Json;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SensorMapping {
@@ -34,8 +34,6 @@ struct CreatedMapping {
     #[serde(flatten)]
     mapping: SensorMapping,
 }
-
-
 
 pub struct HttpService {
     // This is a placeholder for future database handle integration. To be implemented
@@ -98,9 +96,7 @@ pub async fn start_http_server(
             }
         };
 
-        if let Err(err) = server
-            .with_graceful_shutdown(shutdown_future)
-            .await {
+        if let Err(err) = server.with_graceful_shutdown(shutdown_future).await {
             error!("HTTP server in shutdown: {}", err);
         };
     });
@@ -110,17 +106,17 @@ pub async fn start_http_server(
 
 // Build the Axum router with routes, handlers, and middleware.
 // This is separate function for testability.
-pub fn build_router(
-    http_db_handle: database::DbHandle,
-    prom_registry: Arc<Registry>,
-) -> Router {
+pub fn build_router(http_db_handle: database::DbHandle, prom_registry: Arc<Registry>) -> Router {
     Router::new()
         // These are subject to change as we refactor the HTTP service
         // .route("/mappings", put(put_mapping).get(list_mappings))
         .route("/temperatures", get(temperatures_get_handler))
         .route("/pressures", get(pressures_get_handler))
         .route("/humidities", get(humidities_get_handler))
-        .route("/mappings", get(mappings_get_handler).post(mappings_post_handler))
+        .route(
+            "/mappings",
+            get(mappings_get_handler).post(mappings_post_handler),
+        )
         .route("/mappings/{id}", delete(mappings_delete_handler))
         .route("/mappings/{id}/restore", post(mappings_restore_handler))
         .route("/metrics", get(metrics_handler))
@@ -130,20 +126,35 @@ pub fn build_router(
         .layer(middleware::from_fn(cors_middleware))
 }
 
-
-async fn temperatures_get_handler(Extension(http_db_handle): Extension<database::DbHandle>,) -> Response {
-    query_helper(http_db_handle, "SELECT * FROM latest_temperatures".to_string()).await
+async fn temperatures_get_handler(
+    Extension(http_db_handle): Extension<database::DbHandle>,
+) -> Response {
+    query_helper(
+        http_db_handle,
+        "SELECT * FROM latest_temperatures".to_string(),
+    )
+    .await
 }
 
-async fn pressures_get_handler(Extension(http_db_handle): Extension<database::DbHandle>) -> Response {
+async fn pressures_get_handler(
+    Extension(http_db_handle): Extension<database::DbHandle>,
+) -> Response {
     query_helper(http_db_handle, "SELECT * FROM latest_pressures".to_string()).await
 }
 
-async fn humidities_get_handler(Extension(http_db_handle): Extension<database::DbHandle>) -> Response {
-    query_helper(http_db_handle, "SELECT * FROM latest_humidities".to_string()).await
+async fn humidities_get_handler(
+    Extension(http_db_handle): Extension<database::DbHandle>,
+) -> Response {
+    query_helper(
+        http_db_handle,
+        "SELECT * FROM latest_humidities".to_string(),
+    )
+    .await
 }
 
-async fn mappings_get_handler(Extension(http_db_handle): Extension<database::DbHandle>) -> Response {
+async fn mappings_get_handler(
+    Extension(http_db_handle): Extension<database::DbHandle>,
+) -> Response {
     query_helper(http_db_handle, "SELECT * FROM all_sensors".to_string()).await
 }
 
@@ -155,7 +166,9 @@ async fn mappings_post_handler(
     if payload.model.is_empty() || payload.id.is_empty() || payload.description.is_empty() {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body(axum::body::Body::from("All fields (model, id, description) must be non-empty"))
+            .body(axum::body::Body::from(
+                "All fields (model, id, description) must be non-empty",
+            ))
             .unwrap();
     }
 
@@ -189,7 +202,9 @@ async fn mappings_post_handler(
                     } else {
                         Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(axum::body::Body::from("Failed to retrieve generated mapping_id"))
+                            .body(axum::body::Body::from(
+                                "Failed to retrieve generated mapping_id",
+                            ))
                             .unwrap()
                     }
                 }
@@ -203,7 +218,9 @@ async fn mappings_post_handler(
             let error_msg = e.to_string();
 
             // Check for constraint violations (e.g., duplicate entries)
-            if error_msg.contains("Constraint Error") || error_msg.contains("UNIQUE constraint failed") {
+            if error_msg.contains("Constraint Error")
+                || error_msg.contains("UNIQUE constraint failed")
+            {
                 Response::builder()
                     .status(StatusCode::CONFLICT)
                     .body(axum::body::Body::from(format!(
@@ -214,7 +231,10 @@ async fn mappings_post_handler(
             } else {
                 Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(axum::body::Body::from(format!("Database error: {}", error_msg)))
+                    .body(axum::body::Body::from(format!(
+                        "Database error: {}",
+                        error_msg
+                    )))
                     .unwrap()
             }
         }
@@ -247,33 +267,31 @@ async fn mappings_restore_handler(
     StatusCode::NO_CONTENT
 }
 
-
 async fn query_helper(http_db_handle: database::DbHandle, query: String) -> Response {
     let res_json = http_db_handle.query(query).await;
 
     match res_json {
-        Ok(db_response) => {
-            Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(db_response.to_string()))
-                .unwrap()
-        },
-        Err(msg) => {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::Body::from(format!("Database query failed: {}", msg)))
-                .unwrap()
-        }
+        Ok(db_response) => Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(db_response.to_string()))
+            .unwrap(),
+        Err(msg) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(axum::body::Body::from(format!(
+                "Database query failed: {}",
+                msg
+            )))
+            .unwrap(),
     }
 }
-
-
 
 /// Expose Prometheus text-format metrics gathered from the provided
 /// `Registry` extension. This returns the body and an (empty) header map so
 /// the caller can set the appropriate `Content-Type` if needed.
-async fn metrics_handler(Extension(prom_registry): Extension<Arc<Registry>>) -> (HeaderMap, String) {
+async fn metrics_handler(
+    Extension(prom_registry): Extension<Arc<Registry>>,
+) -> (HeaderMap, String) {
     let encoder = TextEncoder::new();
     let metric_families = prom_registry.gather();
     let mut buffer = Vec::new();

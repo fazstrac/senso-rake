@@ -45,11 +45,8 @@ pub async fn run() -> anyhow::Result<()> {
     services.push(Box::new(mqtt_service));
 
     // Build HTTP service
-    let http_service = http::HttpService::new(
-        db_handle.clone(),
-        registry.clone(),
-        shutdown_token.clone(),
-    );
+    let http_service =
+        http::HttpService::new(db_handle.clone(), registry.clone(), shutdown_token.clone());
 
     services.push(Box::new(http_service));
 
@@ -74,11 +71,11 @@ pub async fn run() -> anyhow::Result<()> {
         // Refactor: consider different strategy than bypassing normal shutdown. Possibly even removing this.
 
         tokio::select! {
-            _ = sigterm.recv() => { 
+            _ = sigterm.recv() => {
                 info!("Second SIGTERM, exiting immediately.");
                 std::process::exit(1);
             },
-            _ = sigint.recv() => { 
+            _ = sigint.recv() => {
                 info!("Second SIGINT, exiting immediately.");
                 std::process::exit(1);
             },
