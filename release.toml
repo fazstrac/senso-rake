@@ -1,0 +1,10 @@
+# cargo-release configuration
+# Usage: cargo release patch|minor|major
+
+# This is a service, not a library — don't publish to crates.io
+publish = false
+
+# Create a git tag (v0.1.0 format) but don't push to remote automatically
+tag = true
+tag-name = "v{{version}}"
+push = false
