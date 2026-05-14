@@ -2,7 +2,7 @@
  * UI components for the sensor mappings interface
  */
 
-import type { SensorWithMapping, SensorState } from './types';
+import type { SensorWithMapping } from './types';
 import { SensorState, getSensorState } from './types';
 
 export class SensorListUI {
