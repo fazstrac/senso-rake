@@ -11,10 +11,9 @@ mod orchestrator;
 mod server;
 mod service;
 mod shutdown_token;
-mod state;
 
-/// Start the service. Keep `main` minimal so hot-reloads, tests, and
-/// integration points can import `server::run()` directly if needed.
+// Start the service. Keep `main` minimal so hot-reloads, tests, and
+// integration points can import `server::run()` directly if needed.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();

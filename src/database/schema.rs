@@ -34,7 +34,11 @@ CREATE TABLE IF NOT EXISTS pressures (
     battery_ok BIGINT,
     rssi FLOAT
 );
+
+CREATE SEQUENCE IF NOT EXISTS mapping_id_seq START 1;
+
 CREATE TABLE IF NOT EXISTS mappings (
+    mapping_id BIGINT PRIMARY KEY DEFAULT nextval('mapping_id_seq'),
     model VARCHAR,
     id VARCHAR,
     description VARCHAR,
@@ -124,9 +128,10 @@ CREATE OR REPLACE VIEW latest_temperatures AS
 WITH CTE AS (
     SELECT MAX(ULID) AS ULID
     FROM TEMPERATURES_VIEW
-    GROUP BY MODEL, ID
+    GROUP BY DESCRIPTION
 )
 SELECT
+    CTE.ULID,
     MODEL,
     ID,
     TEMPERATURE_C,
@@ -141,9 +146,10 @@ CREATE OR REPLACE VIEW latest_pressures AS
 WITH CTE AS (
     SELECT MAX(ULID) AS ULID
     FROM PRESSURES_VIEW
-    GROUP BY MODEL, ID
+    GROUP BY DESCRIPTION
 )
 SELECT
+    CTE.ULID,
     MODEL,
     ID,
     PRESSURE_kPa,
@@ -158,9 +164,10 @@ CREATE OR REPLACE VIEW latest_humidities AS
 WITH CTE AS (
     SELECT MAX(ULID) AS ULID
     FROM HUMIDITIES_VIEW
-    GROUP BY MODEL, ID
+    GROUP BY DESCRIPTION
 )
 SELECT
+    CTE.ULID,
     MODEL,
     ID,
     HUMIDITY,
@@ -170,6 +177,32 @@ SELECT
     DESCRIPTION
 FROM HUMIDITIES_VIEW
 INNER JOIN CTE ON CTE.ULID = HUMIDITIES_VIEW.ULID;
+
+CREATE OR REPLACE VIEW all_sensors AS
+WITH CTE as (
+SELECT 
+    raw_json->>'model' AS model,
+    raw_json->>'id' AS id,
+    max(ulid) AS latest_ulid,
+    max(ts) AS last_seen
+FROM data_landing 
+GROUP BY 
+    raw_json->>'model',
+    raw_json->>'id' 
+ORDER BY max(ts) DESC
+)
+SELECT 
+    mappings.mapping_id,
+    cte.model,
+    cte.id,
+    cte.last_seen,
+    cte.latest_ulid,
+    mappings.description,
+    mappings.validity_start,
+    mappings.deleted
+FROM cte 
+LEFT JOIN mappings ON mappings.model = cte.model AND mappings.id = cte.id
+ORDER BY mappings.mapping_id;
 "#;
 
 pub const UPDATE_TABLES_SQL: &str = r#"

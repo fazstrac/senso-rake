@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+tasks:
+  ui:build:
+    desc: Build the UI TypeScript to JavaScript
+    dir: ui
+    cmds:
+      - yarn build
+
+  ui:dev:
+    desc: Start the UI development server
+    dir: ui
+    cmds:
+      - yarn dev
+
+  ui:test:
+    desc: Run UI TypeScript unit tests
+    dir: ui
+    cmds:
+      - yarn test --run
+
+  ui:test:watch:
+    desc: Run UI tests in watch mode
+    dir: ui
+    cmds:
+      - yarn test --watch
+
+  ui:test:ui:
+    desc: Run UI tests with interactive UI
+    dir: ui
+    cmds:
+      - yarn test:ui
+
+  build:
+    desc: Build the entire project (Rust + UI)
+    cmds:
+      - cargo build
+      - task: ui:build
+
+  test:
+    desc: Run all tests (Rust + UI)
+    cmds:
+      - cargo test
+      - task: ui:test
+
+  release:check:
+    desc: Run all pre-release checks (fmt, clippy, test, deny, audit)
+    cmds:
+      - cargo fmt --all -- --check
+      - cargo clippy --all-targets --all-features -- -D warnings
+      - cargo test
+      - task: ui:test
+      - cargo deny check
+      - cargo audit
+
+  dev:
+    desc: Run the development environment
+    cmds:
+      - task: ui:dev

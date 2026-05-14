@@ -1,0 +1,15 @@
+# senso-rake is a binary application, not a crates.io library
+publish = false
+
+# Push version bump commit and tag to origin after a successful release
+push = true
+
+# Tag the release commit with vX.Y.Z
+tag = true
+tag-name = "v{{version}}"
+
+# Follow the project's conventional-commit style
+pre-release-commit-message = "chore: release {{crate_name}} v{{version}}"
+
+# Verify the full test suite passes before tagging
+pre-release-hook = ["task", "release:check"]

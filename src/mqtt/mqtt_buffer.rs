@@ -37,7 +37,7 @@ pub fn process_message(json_str: &str) -> ProcessedMsg {
             // Return a special row with raw JSON preserved
             return ProcessedMsg {
                 ulid: Some(generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string()),
-                ts,                        // or a sentinel
+                ts,                                   // or a sentinel
                 raw_json: Some(json_str.to_string()), // keep the original string
             };
         }
@@ -84,8 +84,7 @@ pub fn create_arrow_record_batch(rows: &[ProcessedMsg]) -> Result<RecordBatch> {
             .map(|r| r.ulid.clone().unwrap_or_default())
             .collect::<Vec<String>>(),
     );
-    let ra =
-        TimestampMicrosecondArray::from(rows.iter().map(|r| r.ts).collect::<Vec<i64>>());
+    let ra = TimestampMicrosecondArray::from(rows.iter().map(|r| r.ts).collect::<Vec<i64>>());
     let raw_arr = StringArray::from(
         rows.iter()
             .map(|r| r.raw_json.clone().unwrap_or_default())

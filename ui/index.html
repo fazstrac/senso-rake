@@ -3,21 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Mappings UI</title>
+    <title>SensoRake - Sensor Mappings</title>
   </head>
   <body>
-    <div id="app">
-      <h1>Sensor Mappings</h1>
-      <form id="mappingForm">
-        <label>Sensor ID <input id="sensor_id" required /></label>
-        <label>Manufacturer <input id="manufacturer" required /></label>
-        <label>Logical name <input id="name" required /></label>
-        <button type="submit">Save mapping</button>
-      </form>
+    <header>
+      <div class="header-content">
+        <div class="logo">
+          <img src="../img/sensorake-logo.svg" alt="SensoRake Logo" />
+        </div>
+        <h1>Sensor Mappings</h1>
+      </div>
+    </header>
 
-      <h2>Existing mappings</h2>
-      <table id="mappingsTable"><thead><tr><th>Manufacturer</th><th>Sensor ID</th><th>Name</th></tr></thead><tbody></tbody></table>
-    </div>
+    <main class="container">
+      <div id="create-mapping-form"></div>
+      <div id="sensor-list"></div>
+    </main>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
