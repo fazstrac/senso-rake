@@ -1,10 +1,15 @@
-# cargo-release configuration
-# Usage: cargo release patch|minor|major
-
-# This is a service, not a library — don't publish to crates.io
+# senso-rake is a binary application, not a crates.io library
 publish = false
 
-# Create a git tag (v0.1.0 format) but don't push to remote automatically
+# Push version bump commit and tag to origin after a successful release
+push = true
+
+# Tag the release commit with vX.Y.Z
 tag = true
 tag-name = "v{{version}}"
-push = false
+
+# Follow the project's conventional-commit style
+pre-release-commit-message = "chore: release {{crate_name}} v{{version}}"
+
+# Verify the full test suite passes before tagging
+pre-release-hook = ["task", "test"]
