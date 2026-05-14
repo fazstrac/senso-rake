@@ -12,4 +12,4 @@ tag-name = "v{{version}}"
 pre-release-commit-message = "chore: release {{crate_name}} v{{version}}"
 
 # Verify the full test suite passes before tagging
-pre-release-hook = ["task", "test"]
+pre-release-hook = ["task", "release:check"]

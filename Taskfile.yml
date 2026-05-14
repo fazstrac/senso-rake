@@ -19,7 +19,7 @@ tasks:
     desc: Run UI TypeScript unit tests
     dir: ui
     cmds:
-      - yarn test
+      - yarn test --run
 
   ui:test:watch:
     desc: Run UI tests in watch mode
@@ -44,6 +44,16 @@ tasks:
     cmds:
       - cargo test
       - task: ui:test
+
+  release:check:
+    desc: Run all pre-release checks (fmt, clippy, test, deny, audit)
+    cmds:
+      - cargo fmt --all -- --check
+      - cargo clippy --all-targets --all-features -- -D warnings
+      - cargo test
+      - task: ui:test
+      - cargo deny check
+      - cargo audit
 
   dev:
     desc: Run the development environment
