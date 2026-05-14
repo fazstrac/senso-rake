@@ -74,6 +74,15 @@ ignore = [
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
+
+    # rustls-webpki 0.102.8 via rumqttc 0.25.1 (latest stable, no upstream fix available).
+    # TLS is not used in this deployment so these certificate validation bugs are not reachable.
+    { id = "RUSTSEC-2026-0049", reason = "CRL distribution point matching logic; TLS not used in this deployment" },
+    { id = "RUSTSEC-2026-0098", reason = "URI name constraints incorrectly accepted; TLS not used in this deployment" },
+    { id = "RUSTSEC-2026-0099", reason = "Wildcard name constraints incorrectly accepted; TLS not used in this deployment" },
+    { id = "RUSTSEC-2026-0104", reason = "Reachable panic in CRL parsing; TLS not used in this deployment" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is no longer maintained; TLS not used in this deployment" },
+    
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -207,6 +216,17 @@ deny = [
 skip = [
     #"ansi_term@0.11.0",
     #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason why it can't be updated/removed" },
+
+    # Transitive dependency version splits from duckdb / rumqttc / arrow; not resolvable by us.
+    { crate = "getrandom@0.2.17", reason = "ring (via rumqttc) requires 0.2.x; rand requires 0.3.x" },
+    { crate = "hashbrown@0.15.5", reason = "hashlink (via duckdb) requires 0.15.x; arrow requires 0.17.x" },
+    { crate = "linux-raw-sys@0.4.15", reason = "crossterm (via duckdb) requires 0.4.x; xattr requires 0.12.x" },
+    { crate = "rustix@0.38.44", reason = "crossterm (via duckdb) requires 0.38.x; xattr requires 1.x" },
+    { crate = "rustls-webpki@0.102.8", reason = "rumqttc 0.25.1 requires 0.102.x; rustls requires 0.103.x" },
+    { crate = "thiserror@1.0.69", reason = "protobuf (via prometheus) requires 1.x; rumqttc requires 2.x" },
+    { crate = "thiserror-impl@1.0.69", reason = "pulled in by thiserror 1.x" },
+    { crate = "windows-sys@0.52.0", reason = "ring requires 0.52.x" },
+    { crate = "windows-sys@0.59.0", reason = "rustix 0.38.x requires 0.59.x" },
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive

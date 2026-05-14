@@ -1,0 +1,10 @@
+[advisories]
+ignore = [
+    # rustls-webpki 0.102.8 via rumqttc 0.25.1 (latest stable, no upstream fix available).
+    # TLS is not used in this deployment so these certificate validation bugs are not reachable.
+    "RUSTSEC-2026-0049", # CRL distribution point matching logic
+    "RUSTSEC-2026-0098", # URI name constraints incorrectly accepted
+    "RUSTSEC-2026-0099", # Wildcard name constraints incorrectly accepted
+    "RUSTSEC-2026-0104", # Reachable panic in CRL parsing
+    "RUSTSEC-2025-0134", # rustls-pemfile is no longer maintained, but rumqttc hasn't caught up yet
+]
