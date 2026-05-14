@@ -2,6 +2,7 @@
 name = "senso-rake"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 axum = "0.8.7"
@@ -20,7 +21,7 @@ ulid = "1.2.1"
 sha2 = "0.10.9"
 log = "0.4.29"
 env_logger = "0.11.8"
-arrow-json = "56.2.0"
+arrow-json = "58"
 
 [profile.dev]
 opt-level = 0
