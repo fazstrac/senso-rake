@@ -1,4 +1,5 @@
 use crate::mqtt::msg_hash::generate_dedup_ulid;
+use crate::domain::entities::RawMessage;
 
 use anyhow::Result;
 use chrono::{Local, NaiveDateTime, TimeZone, Utc};
@@ -6,52 +7,52 @@ use duckdb::arrow::array::{StringArray, TimestampMicrosecondArray};
 use duckdb::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use duckdb::arrow::record_batch::RecordBatch;
 use log::error;
+use serde::Deserialize;
 use std::sync::Arc;
 
-use serde::Deserialize;
+// #[derive(Debug, Clone)]
+// pub struct ProcessedMsg_ {
+//     // Universally Unique Lexicographically Sortable Identifier
+//     ulid: Option<String>,
+//     // microseconds since epoch; suitable for Arrow Timestamp(Microsecond)
+//     ts: i64,
+//     raw_json: Option<String>,
+// }
 
 #[derive(Debug, Deserialize)]
-struct RawMessage {
-    time: String,
+struct TimestampMessage {
+    time: String,    
 }
 
-#[derive(Debug, Clone)]
-pub struct ProcessedMsg {
-    // Universally Unique Lexicographically Sortable Identifier
-    ulid: Option<String>,
-    // microseconds since epoch; suitable for Arrow Timestamp(Microsecond)
-    ts: i64,
-    raw_json: Option<String>,
-}
-
-// Normalize one JSON message string into ProcessedMsg entry
+// Normalize one JSON message string into RawMessage entry
 // On error, returns a single row with error info and raw JSON preserved
-pub fn process_message(json_str: &str) -> ProcessedMsg {
-    let raw: RawMessage = match serde_json::from_str(json_str) {
+pub fn process_message(json_str: &str) -> RawMessage {
+    
+    let raw: TimestampMessage = match serde_json::from_str(json_str) {
         Ok(r) => r,
         Err(err) => {
             error!("Error parsing JSON message: {}", err);
             // Save current timestamp for error case
             // Same timestamp should be used for ULID generation
-            let ts = Utc::now().timestamp_micros();
+            let timestamp_us = Utc::now().timestamp_micros();
             // Return a special row with raw JSON preserved
-            return ProcessedMsg {
-                ulid: Some(generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string()),
-                ts,                                   // or a sentinel
-                raw_json: Some(json_str.to_string()), // keep the original string
+            return RawMessage {
+                ulid: generate_dedup_ulid(timestamp_us as u64 / 1000, json_str.as_bytes()).to_string(),
+                timestamp_us,                                   // or a sentinel
+                raw_json: json_str.to_string(), // keep the original string
             };
         }
     };
 
     let ts = parse_time(&raw.time);
 
-    ProcessedMsg {
+    RawMessage {
         // Generate ULID based on timestamp and original JSON bytes
         // ULID timestamp is in milliseconds to match spec (48 bits) so drop precision on purpose
         // Possible to improve later with UUIDv7 or similar if needed
-        ulid: Some(generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string()),
-        ts,
-        raw_json: Some(json_str.to_string()),
+        ulid: generate_dedup_ulid(ts as u64 / 1000, json_str.as_bytes()).to_string(),
+        timestamp_us: ts,
+        raw_json: json_str.to_string(),
     }
 }
 
@@ -78,16 +79,16 @@ fn parse_time(val_opt: &str) -> i64 {
     Utc::now().timestamp_micros()
 }
 
-pub fn create_arrow_record_batch(rows: &[ProcessedMsg]) -> Result<RecordBatch> {
+pub fn create_arrow_record_batch(rows: &[RawMessage]) -> Result<RecordBatch> {
     let ulid_arr = StringArray::from(
         rows.iter()
-            .map(|r| r.ulid.clone().unwrap_or_default())
+            .map(|r| r.ulid.clone())
             .collect::<Vec<String>>(),
     );
-    let ra = TimestampMicrosecondArray::from(rows.iter().map(|r| r.ts).collect::<Vec<i64>>());
+    let ra = TimestampMicrosecondArray::from(rows.iter().map(|r| r.timestamp_us).collect::<Vec<i64>>());
     let raw_arr = StringArray::from(
         rows.iter()
-            .map(|r| r.raw_json.clone().unwrap_or_default())
+            .map(|r| r.raw_json.clone())
             .collect::<Vec<String>>(),
     );
 
@@ -180,9 +181,7 @@ mod tests {
 
         // Check that each row has ulid, ts, and raw_json
         for r in &all_rows {
-            assert!(r.ulid.is_some(), "ulid should be present");
-            assert!(r.ts > 0, "ts should be parsed");
-            assert!(r.raw_json.is_some(), "raw_json should be present");
+            assert!(r.timestamp_us > 0, "ts should be parsed");            
         }
     }
 
@@ -192,11 +191,7 @@ mod tests {
         // a single sentinel row preserving the original string.
         let bad = "{ this is not valid json }";
         let msg = process_message(bad);
-        assert_eq!(msg.raw_json.as_deref(), Some(bad));
-        assert!(
-            msg.ulid.is_some(),
-            "ulid should be generated for error rows"
-        );
+        assert_eq!(msg.raw_json, bad);
     }
 
     #[test]
@@ -205,11 +200,7 @@ mod tests {
         // a single sentinel row preserving the original string.
         let bad = "{ \"message\": \"this is valid json, but missing expected fields\" }";
         let msg = process_message(bad);
-        assert_eq!(msg.raw_json.as_deref(), Some(bad));
-        assert!(
-            msg.ulid.is_some(),
-            "ulid should be generated for error rows"
-        );
+        assert_eq!(msg.raw_json, bad);
     }
 
     #[test]

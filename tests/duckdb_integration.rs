@@ -4,7 +4,7 @@ use duckdb::Connection;
 use senso_rake::database::schema::SCHEMA_SQL;
 use senso_rake::mqtt::mqtt_buffer::{create_arrow_record_batch, process_message};
 
-fn sample_rows() -> Vec<senso_rake::mqtt::mqtt_buffer::ProcessedMsg> {
+fn sample_rows() -> Vec<senso_rake::domain::entities::RawMessage> {
     // Minimal sample messages exercising the timestamp parsing
     let test_json = r#"[
         {

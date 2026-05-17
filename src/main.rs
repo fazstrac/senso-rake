@@ -7,6 +7,7 @@ use log::info;
 mod database;
 mod http;
 mod mqtt;
+mod domain;
 mod orchestrator;
 mod server;
 mod service;

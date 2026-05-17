@@ -2,6 +2,7 @@
 // Keep modules public but preserve internal structure.
 
 pub mod database;
+pub mod domain;
 pub mod http;
 pub mod mqtt;
 pub mod orchestrator;
