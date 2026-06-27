@@ -1,10 +1,8 @@
 // HTTP handlers for the service. This module sets up the Axum
 // router with routes, handlers, and middleware.
 use crate::database;
-use crate::domain::entities::{SensorMapping, NewMapping, MappingId};
 use crate::service::{Service, ServiceType};
 use crate::shutdown_token::ShutdownToken;
-
 
 use log::{error, info};
 
@@ -19,15 +17,22 @@ use axum::response::Response;
 use axum::routing::{delete, get, post}; // post is used in build_router for mappings_post_handler
 
 use axum::Json;
-#[allow(unused_imports)]
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct SensorMapping {
+    pub model: String,
+    pub id: String,
+    pub validity_start: DateTime<Utc>,
+    pub description: String,
+}
+
+#[derive(Debug, Serialize)]
 struct CreatedMapping {
-    mapping_id: MappingId,
+    mapping_id: i64,
     #[serde(flatten)]
-    mapping: NewMapping,
+    mapping: SensorMapping,
 }
 
 pub struct HttpService {
@@ -155,7 +160,7 @@ async fn mappings_get_handler(
 
 async fn mappings_post_handler(
     Extension(http_db_handle): Extension<database::DbHandle>,
-    Json(payload): Json<NewMapping>,
+    Json(payload): Json<SensorMapping>,
 ) -> Response {
     // Validate that all fields are non-empty
     if payload.model.is_empty() || payload.id.is_empty() || payload.description.is_empty() {
@@ -183,7 +188,7 @@ async fn mappings_post_handler(
                 Ok(rows) if !rows.is_empty() => {
                     if let Some(mapping_id) = rows[0].get("mapping_id").and_then(|v| v.as_i64()) {
                         let response = CreatedMapping {
-                            mapping_id: MappingId(mapping_id),
+                            mapping_id,
                             mapping: payload,
                         };
 
@@ -352,7 +357,7 @@ mod tests {
     #[test]
     fn test_sensor_mapping_deserialization_valid() {
         let json = r#"{"model":"sensor-a","id":"001","validity_start":"2025-02-14T10:30:00Z","description":"Living Room"}"#;
-        let result: Result<NewMapping, _> = serde_json::from_str(json);
+        let result: Result<SensorMapping, _> = serde_json::from_str(json);
         assert!(result.is_ok());
         let mapping = result.unwrap();
         assert_eq!(mapping.model, "sensor-a");
@@ -363,20 +368,20 @@ mod tests {
     #[test]
     fn test_sensor_mapping_deserialization_missing_field() {
         let json = r#"{"model":"sensor-a","id":"001"}"#;
-        let result: Result<NewMapping, _> = serde_json::from_str(json);
+        let result: Result<SensorMapping, _> = serde_json::from_str(json);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_sensor_mapping_deserialization_invalid_timestamp() {
         let json = r#"{"model":"sensor-a","id":"001","validity_start":"not-a-date","description":"Living Room"}"#;
-        let result: Result<NewMapping, _> = serde_json::from_str(json);
+        let result: Result<SensorMapping, _> = serde_json::from_str(json);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_sensor_mapping_serialization() {
-        let mapping = NewMapping {
+        let mapping = SensorMapping {
             model: "sensor-b".to_string(),
             id: "002".to_string(),
             validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
@@ -393,7 +398,7 @@ mod tests {
 
     #[test]
     fn test_created_mapping_serialization() {
-        let mapping = NewMapping {
+        let mapping = SensorMapping {
             model: "sensor-c".to_string(),
             id: "003".to_string(),
             validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
@@ -402,7 +407,7 @@ mod tests {
             description: "Kitchen".to_string(),
         };
         let created = CreatedMapping {
-            mapping_id: MappingId(42),
+            mapping_id: 42,
             mapping,
         };
         let json = serde_json::to_string(&created).unwrap();
@@ -414,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_validation_empty_model() {
-        let mapping = NewMapping {
+        let mapping = SensorMapping {
             model: "".to_string(),
             id: "001".to_string(),
             validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
@@ -427,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_validation_empty_id() {
-        let mapping = NewMapping {
+        let mapping = SensorMapping {
             model: "sensor".to_string(),
             id: "".to_string(),
             validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")
@@ -440,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_validation_empty_description() {
-        let mapping = NewMapping {
+        let mapping = SensorMapping {
             model: "sensor".to_string(),
             id: "001".to_string(),
             validity_start: DateTime::parse_from_rfc3339("2025-02-14T10:30:00Z")

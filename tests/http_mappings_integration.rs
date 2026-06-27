@@ -33,10 +33,10 @@ async fn test_post_mappings_payload_validation_invalid_timestamp() {
         "description": "Living Room"
     }"#;
 
-    // Try to deserialize with our actual NewMapping struct
+    // Try to deserialize with our actual SensorMapping struct
     // This should fail because the timestamp is invalid
-    use senso_rake::domain::entities::NewMapping;
-    let result: Result<NewMapping, _> = serde_json::from_str(payload_with_bad_ts);
+    use senso_rake::http::SensorMapping;
+    let result: Result<SensorMapping, _> = serde_json::from_str(payload_with_bad_ts);
     assert!(
         result.is_err(),
         "Invalid timestamp should cause deserialization to fail"
@@ -45,7 +45,7 @@ async fn test_post_mappings_payload_validation_invalid_timestamp() {
 
 #[tokio::test]
 async fn test_post_mappings_payload_accepts_valid_timestamp() {
-    use senso_rake::domain::entities::NewMapping;
+    use senso_rake::http::SensorMapping;
 
     let valid_payload = json!({
         "model": "LaCrosse-TX29IT",
@@ -55,7 +55,7 @@ async fn test_post_mappings_payload_accepts_valid_timestamp() {
     });
 
     let json_str = serde_json::to_string(&valid_payload).unwrap();
-    let result: Result<NewMapping, _> = serde_json::from_str(&json_str);
+    let result: Result<SensorMapping, _> = serde_json::from_str(&json_str);
 
     assert!(
         result.is_ok(),
@@ -69,7 +69,7 @@ async fn test_post_mappings_payload_accepts_valid_timestamp() {
 
 #[tokio::test]
 async fn test_timestamp_always_utc() {
-    use senso_rake::domain::entities::NewMapping;
+    use senso_rake::http::SensorMapping;
 
     let payload = json!({
         "model": "sensor",
@@ -79,7 +79,7 @@ async fn test_timestamp_always_utc() {
     });
 
     let json_str = serde_json::to_string(&payload).unwrap();
-    let mapping: NewMapping = serde_json::from_str(&json_str).unwrap();
+    let mapping: SensorMapping = serde_json::from_str(&json_str).unwrap();
 
     // Verify it's stored as UTC
     let serialized = serde_json::to_string(&mapping).unwrap();

@@ -11,7 +11,6 @@ use prometheus::IntCounter;
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
 use tokio::time::{self, Duration};
 
-use crate::domain::entities::RawMessage;
 use crate::mqtt::mqtt_buffer;
 
 /// Start a long-running MQTT loop. This function never returns unless an
@@ -151,7 +150,7 @@ pub async fn start_mqtt_worker(
         }
     }
 
-    let mut all_rows: Vec<RawMessage> = Vec::new();
+    let mut all_rows: Vec<mqtt_buffer::ProcessedMsg> = Vec::new();
 
     // Timer for periodic flush and checkpoint
     let mut interval_flush = time::interval(Duration::from_secs(mqtt_flush_interval));

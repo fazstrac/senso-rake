@@ -4,4 +4,4 @@ pub use service::HttpService;
 
 // Re-exported for tests
 #[allow(unused_imports)]
-pub use service::{build_router};
+pub use service::{SensorMapping, build_router};
