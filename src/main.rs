@@ -1,6 +1,5 @@
 use log::info;
 
-use tokio;
 use senso_rake::server;
 
 #[tokio::main]
