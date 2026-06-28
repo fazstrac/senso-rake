@@ -364,7 +364,7 @@ mod tests {
 
     use tower::ServiceExt;
 
-    // Ports and adapter igration notes:
+    // Ports and adapter migration notes:
     // - unit testing the HTTP router needs a fake database handle setup
     // - unit testing the HTTP router needs to check if proper SQL is being
     //   launched
