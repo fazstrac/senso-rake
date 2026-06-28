@@ -361,6 +361,7 @@ mod tests {
     use crossbeam_channel::{Receiver, TryRecvError};
     use database::{DbCommand, DbHandle, DbJob, DbResponse};
     use prometheus::IntCounter;
+
     use tower::ServiceExt;
 
     // Ports and adapter igration notes:
@@ -369,8 +370,8 @@ mod tests {
     //   launched
     // - Database persistence should be abstracted and uncoupled from HTTP
     //
-    // TODO: migrate these notes into the changelog once the migration is ready
-    // 
+    // TODO: migrate these notes into the changelog once the migration is ready to merge
+    //
 
     fn fake_db() -> (DbHandle, Receiver<DbJob>) {
         let (tx, rx) = crossbeam_channel::unbounded();

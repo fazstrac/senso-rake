@@ -329,6 +329,11 @@ fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
                         let p: [&dyn duckdb::ToSql; 3] = [&params[0], &params[1], &params[2]];
                         stmt.query_arrow(&p)?
                     }
+                    4 => {
+                        let p: [&dyn duckdb::ToSql; 4] =
+                            [&params[0], &params[1], &params[2], &params[3]];
+                        stmt.query_arrow(&p)?
+                    }
                     _ => {
                         return Err(anyhow::anyhow!(
                             "Unsupported parameter count: {}",
