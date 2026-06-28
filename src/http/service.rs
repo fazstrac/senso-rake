@@ -363,6 +363,15 @@ mod tests {
     use prometheus::IntCounter;
     use tower::ServiceExt;
 
+    // Ports and adapter igration notes:
+    // - unit testing the HTTP router needs a fake database handle setup
+    // - unit testing the HTTP router needs to check if proper SQL is being
+    //   launched
+    // - Database persistence should be abstracted and uncoupled from HTTP
+    //
+    // TODO: migrate these notes into the changelog once the migration is ready
+    // 
+
     fn fake_db() -> (DbHandle, Receiver<DbJob>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         (DbHandle::new(tx), rx)

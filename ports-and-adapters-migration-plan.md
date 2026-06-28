@@ -269,15 +269,15 @@ application runnable.
 
 Before moving boundaries, capture the behavior that is meant to survive.
 
-1. Add real Axum router tests that use a controlled `DbHandle` worker or an
+- [x] Add real Axum router tests that use a controlled `DbHandle` worker or an
    in-memory DuckDB-backed application.
-2. Add a test proving mapping creation reaches DuckDB and returns its generated
+- [ ] Add a test proving mapping creation reaches DuckDB and returns its generated
    ID; fix the four-parameter limitation as part of that test.
-3. Characterize MQTT normalization for numeric epoch timestamps, naive
+- [ ] Characterize MQTT normalization for numeric epoch timestamps, naive
    timestamps, malformed JSON, missing timestamps, and deterministic IDs.
-4. Test threshold, timer, shutdown, and failed-storage flush behavior around a
+- [ ] Test threshold, timer, shutdown, and failed-storage flush behavior around a
    small extracted batching helper if necessary.
-5. Stop declaring the application module tree from both `main.rs` and `lib.rs`;
+- [x] Stop declaring the application module tree from both `main.rs` and `lib.rs`;
    let the binary call the library composition root.
 
 Gate: `cargo fmt`, strict Clippy, and all Rust tests pass. Tests document any
