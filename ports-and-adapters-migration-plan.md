@@ -273,7 +273,7 @@ Before moving boundaries, capture the behavior that is meant to survive.
    in-memory DuckDB-backed application.
 - [x] Add a test proving mapping creation reaches DuckDB and returns its generated
    ID; fix the four-parameter limitation as part of that test.
-- [ ] Characterize MQTT normalization for numeric epoch timestamps, naive
+- [x] Characterize MQTT normalization for numeric epoch timestamps, naive
    timestamps, malformed JSON, missing timestamps, and deterministic IDs.
 - [ ] Test threshold, timer, shutdown, and failed-storage flush behavior around a
    small extracted batching helper if necessary.
