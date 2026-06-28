@@ -65,6 +65,7 @@ pub struct DbJob {
     pub response: tokio::sync::oneshot::Sender<anyhow::Result<DbResponse>>,
 }
 
+#[derive(Debug)]
 pub enum DbResponse {
     QueryResult(String),
     // ExecuteBatchResult,
