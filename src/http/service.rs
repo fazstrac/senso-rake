@@ -354,14 +354,13 @@ async fn cors_middleware(req: Request<axum::body::Body>, next: Next) -> Response
 mod tests {
     use super::*;
 
-    use crossbeam_channel::{Receiver, TryRecvError};
-    use database::{DbCommand, DbHandle, DbJob, DbResponse};
-    use prometheus::IntCounter;
-
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
+    use crossbeam_channel::{Receiver, TryRecvError};
+    use database::{DbCommand, DbHandle, DbJob, DbResponse};
+    use prometheus::IntCounter;
     use tower::ServiceExt;
 
     fn fake_db() -> (DbHandle, Receiver<DbJob>) {
@@ -369,368 +368,236 @@ mod tests {
         (DbHandle::new(tx), rx)
     }
 
-    #[tokio::test]
-    async fn health_returns_ok() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
+    enum ExpectedDbCommand {
+        Query {
+            sql: &'static str,
+            response: &'static str,
+        },
+        QueryWithParams {
+            sql: &'static str,
+            params: &'static [&'static str],
+            response: &'static str,
+        },
+    }
 
-        // hold on to handle to avoid Disconnected error
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .uri("/health")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        match rx.try_recv() {
-            Err(TryRecvError::Empty) => {} // This is what we expect
-            Ok(_) => panic!("/health endpoint should not send a database job"),
-            Err(TryRecvError::Disconnected) => {
-                panic!("database receive channel was unexpectedly disconnected")
-            }
-        }
+    struct RouterTestCase {
+        name: &'static str,
+        method: Method,
+        uri: &'static str,
+        request_body: Option<&'static str>,
+        expected_status: StatusCode,
+        expected_db_command: Option<ExpectedDbCommand>,
+        expected_body_fragment: Option<&'static str>,
     }
 
     #[tokio::test]
-    async fn post_mappings_returns_created() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-
-        let worker = std::thread::spawn(move || {
-            let job = rx.recv().unwrap();
-
-            match job.command {
-                DbCommand::QueryWithParams(sql, params) => {
-                    assert!(sql.starts_with("INSERT INTO mappings"));
-                    assert_eq!(params.len(), 4);
-
-                    job.response
-                        .send(Ok(DbResponse::QueryResult(
-                            r#"[{"mapping_id":1}]"#.to_string(),
-                        )))
-                        .unwrap();
-                }
-                _ => panic!("unexpected database command"),
-            }
-        });
-
-        // hold on to handle to avoid Disconnected error
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/mappings")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{
+    async fn router_endpoints_follow_their_contracts() {
+        let cases = vec![
+            RouterTestCase {
+                name: "health",
+                method: Method::GET,
+                uri: "/health",
+                request_body: None,
+                expected_status: StatusCode::OK,
+                expected_db_command: None,
+                expected_body_fragment: None,
+            },
+            RouterTestCase {
+                name: "temperatures",
+                method: Method::GET,
+                uri: "/temperatures",
+                request_body: None,
+                expected_status: StatusCode::OK,
+                expected_db_command: Some(ExpectedDbCommand::Query {
+                    sql: "SELECT * FROM latest_temperatures",
+                    response: r#"[{"temperature_C":21.5}]"#,
+                }),
+                expected_body_fragment: Some(r#""temperature_C":21.5"#),
+            },
+            RouterTestCase {
+                name: "pressures",
+                method: Method::GET,
+                uri: "/pressures",
+                request_body: None,
+                expected_status: StatusCode::OK,
+                expected_db_command: Some(ExpectedDbCommand::Query {
+                    sql: "SELECT * FROM latest_pressures",
+                    response: r#"[{"pressure_kPa":101.3}]"#,
+                }),
+                expected_body_fragment: Some(r#""pressure_kPa":101.3"#),
+            },
+            RouterTestCase {
+                name: "humidities",
+                method: Method::GET,
+                uri: "/humidities",
+                request_body: None,
+                expected_status: StatusCode::OK,
+                expected_db_command: Some(ExpectedDbCommand::Query {
+                    sql: "SELECT * FROM latest_humidities",
+                    response: r#"[{"humidity":42.0}]"#,
+                }),
+                expected_body_fragment: Some(r#""humidity":42.0"#),
+            },
+            RouterTestCase {
+                name: "list mappings",
+                method: Method::GET,
+                uri: "/mappings",
+                request_body: None,
+                expected_status: StatusCode::OK,
+                expected_db_command: Some(ExpectedDbCommand::Query {
+                    sql: "SELECT * FROM all_sensors",
+                    response: r#"[{"mapping_id":1}]"#,
+                }),
+                expected_body_fragment: Some(r#""mapping_id":1"#),
+            },
+            RouterTestCase {
+                name: "create mapping",
+                method: Method::POST,
+                uri: "/mappings",
+                request_body: Some(
+                    r#"{
                         "model": "sensor-a",
                         "id": "123",
                         "description": "Livingroom",
                         "validity_start": "2026-06-28T12:00:00Z"
                     }"#,
-                    ))
-                    .unwrap(),
+                ),
+                expected_status: StatusCode::CREATED,
+                expected_db_command: Some(ExpectedDbCommand::QueryWithParams {
+                    sql: "INSERT INTO mappings (model, id, validity_start, description) VALUES (?, ?, ?, ?) RETURNING mapping_id",
+                    params: &["sensor-a", "123", "2026-06-28T12:00:00+00:00", "Livingroom"],
+                    response: r#"[{"mapping_id":1}]"#,
+                }),
+                expected_body_fragment: Some(r#""mapping_id":1"#),
+            },
+            RouterTestCase {
+                name: "delete mapping",
+                method: Method::DELETE,
+                uri: "/mappings/123",
+                request_body: None,
+                expected_status: StatusCode::NO_CONTENT,
+                expected_db_command: Some(ExpectedDbCommand::QueryWithParams {
+                    sql: "UPDATE mappings SET deleted = true WHERE mapping_id = ?",
+                    params: &["123"],
+                    response: "[]",
+                }),
+                expected_body_fragment: None,
+            },
+            RouterTestCase {
+                name: "restore mapping",
+                method: Method::POST,
+                uri: "/mappings/123/restore",
+                request_body: None,
+                expected_status: StatusCode::NO_CONTENT,
+                expected_db_command: Some(ExpectedDbCommand::QueryWithParams {
+                    sql: "UPDATE mappings SET deleted = false WHERE mapping_id = ?",
+                    params: &["123"],
+                    response: "[]",
+                }),
+                expected_body_fragment: None,
+            },
+            RouterTestCase {
+                name: "metrics",
+                method: Method::GET,
+                uri: "/metrics",
+                request_body: None,
+                expected_status: StatusCode::OK,
+                expected_db_command: None,
+                expected_body_fragment: Some("router_test_requests_total 1"),
+            },
+        ];
+
+        for case in cases {
+            let (handle, rx) = fake_db();
+            let registry = Arc::new(Registry::new());
+            let counter = IntCounter::new(
+                "router_test_requests_total",
+                "Requests observed by the router test",
             )
-            .await
             .unwrap();
+            counter.inc();
+            registry.register(Box::new(counter)).unwrap();
 
-        assert_eq!(response.status(), StatusCode::CREATED);
+            let worker_rx = rx.clone();
+            let worker = case.expected_db_command.map(|expected| {
+                let name = case.name;
+                std::thread::spawn(move || {
+                    let job = worker_rx.recv().unwrap();
 
-        worker.join().unwrap();
-    }
+                    match (expected, job.command) {
+                        (
+                            ExpectedDbCommand::Query {
+                                sql: expected_sql,
+                                response,
+                            },
+                            DbCommand::Query(sql),
+                        ) => {
+                            assert_eq!(sql, expected_sql, "{name}");
+                            job.response
+                                .send(Ok(DbResponse::QueryResult(response.to_string())))
+                                .unwrap();
+                        }
+                        (
+                            ExpectedDbCommand::QueryWithParams {
+                                sql: expected_sql,
+                                params: expected_params,
+                                response,
+                            },
+                            DbCommand::QueryWithParams(sql, params),
+                        ) => {
+                            assert_eq!(sql, expected_sql, "{name}");
+                            assert_eq!(
+                                params,
+                                expected_params
+                                    .iter()
+                                    .map(|value| value.to_string())
+                                    .collect::<Vec<_>>(),
+                                "{name}"
+                            );
+                            job.response
+                                .send(Ok(DbResponse::QueryResult(response.to_string())))
+                                .unwrap();
+                        }
+                        _ => panic!("{name}: unexpected database command"),
+                    }
+                })
+            });
 
-    #[tokio::test]
-    async fn get_mappings_returns_created() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-
-        let worker = std::thread::spawn(move || {
-            let job = rx.recv().unwrap();
-
-            match job.command {
-                DbCommand::Query(sql) => {
-                    assert!(sql.starts_with("SELECT * FROM all_sensors"));
-
-                    job.response
-                        .send(Ok(DbResponse::QueryResult(
-                            r#"[{"mapping_id":1}]"#.to_string(),
-                        )))
-                        .unwrap();
+            let mut request = Request::builder().method(case.method).uri(case.uri);
+            let body = match case.request_body {
+                Some(body) => {
+                    request = request.header("content-type", "application/json");
+                    Body::from(body)
                 }
-                _ => panic!("unexpected database command"),
+                None => Body::empty(),
+            };
+
+            let response = build_router(handle.clone(), registry)
+                .oneshot(request.body(body).unwrap())
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), case.expected_status, "{}", case.name);
+
+            if let Some(fragment) = case.expected_body_fragment {
+                let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let body = String::from_utf8(body.to_vec()).unwrap();
+                assert!(
+                    body.contains(fragment),
+                    "{}: response body did not contain {fragment:?}: {body}",
+                    case.name
+                );
             }
-        });
 
-        // hold on to handle to avoid Disconnected error
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/mappings")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        worker.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn delete_mappings_returns_ok() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-
-        let worker = std::thread::spawn(move || {
-            let job = rx.recv().unwrap();
-
-            match job.command {
-                DbCommand::QueryWithParams(sql, params) => {
-                    assert!(sql.starts_with("UPDATE mappings SET deleted = true"));
-                    assert_eq!(params.len(), 1);
-                    assert_eq!(params[0], "123");
-
-                    job.response
-                        .send(Ok(DbResponse::QueryResult(
-                            r#"[{"mapping_id":1}]"#.to_string(),
-                        )))
-                        .unwrap();
-                }
-                _ => panic!("unexpected database command"),
-            }
-        });
-
-        // hold on to handle to avoid Disconnected error
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri("/mappings/123")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NO_CONTENT);
-
-        worker.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn restore_mappings_returns_ok() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-
-        let worker = std::thread::spawn(move || {
-            let job = rx.recv().unwrap();
-
-            match job.command {
-                DbCommand::QueryWithParams(sql, params) => {
-                    assert!(sql.starts_with("UPDATE mappings SET deleted = false"));
-                    assert_eq!(params.len(), 1);
-                    assert_eq!(params[0], "123");
-
-                    job.response
-                        .send(Ok(DbResponse::QueryResult(
-                            r#"[{"mapping_id":1}]"#.to_string(),
-                        )))
-                        .unwrap();
-                }
-                _ => panic!("unexpected database command"),
-            }
-        });
-
-        // hold on to handle to avoid Disconnected error
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/mappings/123/restore")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NO_CONTENT);
-
-        worker.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_temperatures_returns_ok() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-
-        let worker = std::thread::spawn(move || {
-            let job = rx.recv().unwrap();
-
-            match job.command {
-                DbCommand::Query(sql) => {
-                    assert_eq!(sql, "SELECT * FROM latest_temperatures");
-
-                    job.response
-                        .send(Ok(DbResponse::QueryResult(
-                            r#"[{"temperature_C":21.5}]"#.to_string(),
-                        )))
-                        .unwrap();
-                }
-                _ => panic!("unexpected database command"),
-            }
-        });
-
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/temperatures")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        worker.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_pressures_returns_ok() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-
-        let worker = std::thread::spawn(move || {
-            let job = rx.recv().unwrap();
-
-            match job.command {
-                DbCommand::Query(sql) => {
-                    assert_eq!(sql, "SELECT * FROM latest_pressures");
-
-                    job.response
-                        .send(Ok(DbResponse::QueryResult(
-                            r#"[{"pressure_kPa":101.3}]"#.to_string(),
-                        )))
-                        .unwrap();
-                }
-                _ => panic!("unexpected database command"),
-            }
-        });
-
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/pressures")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        worker.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_humidities_returns_ok() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-
-        let worker = std::thread::spawn(move || {
-            let job = rx.recv().unwrap();
-
-            match job.command {
-                DbCommand::Query(sql) => {
-                    assert_eq!(sql, "SELECT * FROM latest_humidities");
-
-                    job.response
-                        .send(Ok(DbResponse::QueryResult(
-                            r#"[{"humidity":42.0}]"#.to_string(),
-                        )))
-                        .unwrap();
-                }
-                _ => panic!("unexpected database command"),
-            }
-        });
-
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/humidities")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        worker.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn metrics_returns_registered_metrics_without_database_access() {
-        let (handle, rx) = fake_db();
-        let registry = Arc::new(Registry::new());
-        let counter = IntCounter::new(
-            "router_test_requests_total",
-            "Requests observed by the router test",
-        )
-        .unwrap();
-        counter.inc();
-        registry.register(Box::new(counter)).unwrap();
-
-        let router = build_router(handle.clone(), registry);
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/metrics")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body.contains("router_test_requests_total 1"));
-
-        match rx.try_recv() {
-            Err(TryRecvError::Empty) => {}
-            Ok(_) => panic!("/metrics endpoint should not send a database job"),
-            Err(TryRecvError::Disconnected) => {
-                panic!("database receive channel was unexpectedly disconnected")
+            match worker {
+                Some(worker) => worker.join().unwrap(),
+                None => match rx.try_recv() {
+                    Err(TryRecvError::Empty) => {}
+                    Ok(_) => panic!("{} unexpectedly sent a database job", case.name),
+                    Err(TryRecvError::Disconnected) => {
+                        panic!("{} database channel unexpectedly disconnected", case.name)
+                    }
+                },
             }
         }
     }
@@ -839,21 +706,18 @@ mod tests {
 
     #[test]
     fn test_delete_returns_no_content() {
-        // Verify that the delete operation returns 204 No Content
         let status = StatusCode::NO_CONTENT;
         assert_eq!(status.as_u16(), 204);
     }
 
     #[test]
     fn test_restore_returns_no_content() {
-        // Verify that the restore operation returns 204 No Content
         let status = StatusCode::NO_CONTENT;
         assert_eq!(status.as_u16(), 204);
     }
 
     #[test]
     fn test_mapping_id_to_string_conversion() {
-        // Test that mapping_id can be converted to string for parameter binding
         let mapping_id: i64 = 42;
         let param = mapping_id.to_string();
         assert_eq!(param, "42");
