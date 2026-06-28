@@ -164,7 +164,7 @@ mod tests {
     ]"#;
 
     #[test]
-    fn test_normalize_message() {
+    fn normalize_message() {
         let v: serde_json::Value = serde_json::from_str(TEST_JSON).expect("parse test json");
         let arr = v.as_array().expect("expected json array");
 
@@ -187,24 +187,33 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_misbehaving_json() {
+    fn normalize_misbehaving_json() {
         // Provide malformed JSON and ensure normalize_one_message returns
         // a single sentinel row preserving the original string.
         let bad = "{ this is not valid json }";
+
+        let before = Utc::now().timestamp_micros();
         let msg = process_message(bad);
+        let after = Utc::now().timestamp_micros();
+
+        assert!(msg.ts >= before);
+        assert!(msg.ts <= after);
         assert_eq!(msg.raw_json.as_deref(), Some(bad));
-        assert!(
-            msg.ulid.is_some(),
-            "ulid should be generated for error rows"
-        );
+        assert!(msg.ulid.is_some());
     }
 
     #[test]
-    fn test_normalize_erroneous_json() {
+    fn valid_json_missing_time_is_timestamped_at_processing_time() {
         // Provide malformed JSON and ensure normalize_one_message returns
         // a single sentinel row preserving the original string.
         let bad = "{ \"message\": \"this is valid json, but missing expected fields\" }";
+
+        let before = Utc::now().timestamp_micros();
         let msg = process_message(bad);
+        let after = Utc::now().timestamp_micros();
+
+        assert!(msg.ts >= before);
+        assert!(msg.ts <= after);
         assert_eq!(msg.raw_json.as_deref(), Some(bad));
         assert!(
             msg.ulid.is_some(),
@@ -231,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_time_unix_epoch() {
+    fn fractional_epoch_is_converted_to_microseconds() {
         // Test parsing Unix epoch as f64
         let s = "1704643200.123456".to_string();
         let ts = parse_time(&s);
@@ -239,37 +248,81 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_time_datetime_format() {
-        // Test parsing datetime string
-        let s = "2025-11-29 22:00:39".to_string();
+    fn whole_epoch_is_converted_to_microseconds() {
+        // Test parsing Unix epoch as f64
+        let s = "1704643200".to_string();
         let ts = parse_time(&s);
-        // Should be a valid ts > 0
-        assert!(ts > 0, "ts should be parsed successfully");
-        // Optionally, check approximate value, but depends on timezone
+        assert_eq!(ts, 1704643200000000);
     }
 
     #[test]
-    fn test_parse_time_invalid() {
+    fn repeated_processing_gives_deterministic_ulids() {
+        let payload = r#"{"time":"1704643200.123456","temperature_C":20.0}"#;
+
+        let first = process_message(payload);
+        let second = process_message(payload);
+
+        assert_eq!(first.ts, second.ts);
+        assert!(first.ulid.is_some());
+        assert_eq!(first.ulid, second.ulid);
+    }
+
+    #[test]
+    fn semantically_same_but_different_formatting_does_not_give_same_ulid() {
+        let compact = r#"{"time":"1704643200.123456"}"#;
+        let spaced = r#"{
+            "time": "1704643200.123456"
+        }"#;
+
+        assert_ne!(process_message(compact).ulid, process_message(spaced).ulid);
+    }
+
+    #[test]
+    fn naive_timestamp_interpreted_as_localtime() {
+        let value = "2025-11-29 22:00:39";
+        let naive = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap();
+
+        let expected = Local
+            .from_local_datetime(&naive)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc)
+            .timestamp_micros();
+
+        assert_eq!(parse_time(value), expected);
+    }
+
+    #[test]
+    fn invalid_timestamp_interpreted_as_processing_time() {
         // Test invalid input falls back to current time
         let s = "invalid".to_string();
+
+        let before = Utc::now().timestamp_micros();
         let ts = parse_time(&s);
-        // Should be current time, which is > some known past time
-        let past_ts = Utc
-            .with_ymd_and_hms(2020, 1, 1, 0, 0, 0)
-            .unwrap()
-            .timestamp_micros();
-        assert!(ts > past_ts, "fallback should be current time");
+        let after = Utc::now().timestamp_micros();
+
+        assert!(ts >= before, "fallback should be current time");
+        assert!(ts <= after, "fallback should be current time");
     }
 
     #[test]
-    fn test_parse_time_empty() {
-        // Test empty string falls back to current time
-        let s = "".to_string();
-        let ts = parse_time(&s);
-        let past_ts = Utc
-            .with_ymd_and_hms(2020, 1, 1, 0, 0, 0)
-            .unwrap()
-            .timestamp_micros();
-        assert!(ts > past_ts, "fallback should be current time");
+    fn missing_time_is_timestamped_at_processing_time() {
+        let payload = r#"{
+            "model": "Ambientweather-F007TH",
+            "id": 141,
+            "channel": 1,
+            "battery_ok": 0,
+            "temperature_C": 18.72223,
+            "humidity": 40,
+            "mic": "CRC"
+        }"#;
+
+        let before = Utc::now().timestamp_micros();
+        let message = process_message(payload);
+        let after = Utc::now().timestamp_micros();
+
+        assert!(message.ts >= before);
+        assert!(message.ts <= after);
+        assert_eq!(message.raw_json.as_deref(), Some(payload));
     }
 }
