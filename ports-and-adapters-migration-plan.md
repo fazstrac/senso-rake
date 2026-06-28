@@ -271,7 +271,7 @@ Before moving boundaries, capture the behavior that is meant to survive.
 
 - [x] Add real Axum router tests that use a controlled `DbHandle` worker or an
    in-memory DuckDB-backed application.
-- [ ] Add a test proving mapping creation reaches DuckDB and returns its generated
+- [x] Add a test proving mapping creation reaches DuckDB and returns its generated
    ID; fix the four-parameter limitation as part of that test.
 - [ ] Characterize MQTT normalization for numeric epoch timestamps, naive
    timestamps, malformed JSON, missing timestamps, and deterministic IDs.
