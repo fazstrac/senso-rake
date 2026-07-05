@@ -275,7 +275,7 @@ Before moving boundaries, capture the behavior that is meant to survive.
    ID; fix the four-parameter limitation as part of that test.
 - [x] Characterize MQTT normalization for numeric epoch timestamps, naive
    timestamps, malformed JSON, missing timestamps, and deterministic IDs.
-- [ ] Test threshold, timer, shutdown, and failed-storage flush behavior around a
+- [x] Test threshold, timer, shutdown, and failed-storage flush behavior around a
    small extracted batching helper if necessary.
 - [x] Stop declaring the application module tree from both `main.rs` and `lib.rs`;
    let the binary call the library composition root.
