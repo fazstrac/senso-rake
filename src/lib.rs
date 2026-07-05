@@ -1,6 +1,6 @@
 // src/lib.rs
 pub mod database;
-// pub mod domain;
+pub mod domain;
 pub mod http;
 pub mod mqtt;
 pub mod orchestrator;
