@@ -15,7 +15,7 @@ struct RawMessage {
     time: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProcessedMsg {
     // Universally Unique Lexicographically Sortable Identifier
     ulid: Option<String>,
@@ -237,6 +237,30 @@ mod tests {
 
         assert_eq!(batch.num_rows(), all_rows.len(), "record batch row count");
         assert_eq!(batch.num_columns(), 3, "record batch column count");
+
+        let ulids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        let timestamps = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<TimestampMicrosecondArray>()
+            .unwrap();
+
+        let raw_json = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        for (i, msg) in all_rows.iter().enumerate() {
+            assert_eq!(Some(ulids.value(i).to_string()), msg.ulid);
+            assert_eq!(timestamps.value(i), msg.ts);
+            assert_eq!(Some(raw_json.value(i).to_string()), msg.raw_json);
+        }
     }
 
     #[test]
