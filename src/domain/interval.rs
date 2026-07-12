@@ -7,7 +7,7 @@ pub struct ValidityInterval {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum ValidityError {
+pub enum ValidityIntervalError {
     EmptyInterval,
 }
 
@@ -15,14 +15,14 @@ impl ValidityInterval {
     pub fn new(
         valid_from: DateTime<Utc>,
         valid_until: Option<DateTime<Utc>>,
-    ) -> Result<Self, ValidityError> {
+    ) -> Result<Self, ValidityIntervalError> {
         match valid_until {
             Some(this_valid_until) => match valid_from < this_valid_until {
                 true => Ok(ValidityInterval {
                     valid_from,
                     valid_until: Some(this_valid_until),
                 }),
-                false => Err(ValidityError::EmptyInterval),
+                false => Err(ValidityIntervalError::EmptyInterval),
             },
             None => Ok(ValidityInterval {
                 valid_from,
@@ -103,7 +103,7 @@ mod tests {
 
         assert_eq!(
             ValidityInterval::new(ts1, Some(ts2)),
-            Err(ValidityError::EmptyInterval),
+            Err(ValidityIntervalError::EmptyInterval),
             "Interval should be empty"
         )
     }
