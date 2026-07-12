@@ -5,7 +5,10 @@ mod interval;
 mod measurement;
 
 pub use binding::SeriesBinding;
-pub use device::{LogicalSensor, PhysicalDevice, PhysicalDeviceIdentity};
+pub use device::{
+    LogicalSensor, LogicalSensorError, PhysicalDevice, PhysicalDeviceError, PhysicalDeviceIdentity,
+    PhysicalDeviceIdentityError,
+};
 pub use ids::{LogicalSensorId, PhysicalDeviceId, SeriesBindingId};
-pub use interval::{ValidityError, ValidityInterval};
-pub use measurement::{MeasurementKind, Observation};
+pub use interval::{ValidityInterval, ValidityIntervalError};
+pub use measurement::{MeasurementKind, Observation, ObservationError};
