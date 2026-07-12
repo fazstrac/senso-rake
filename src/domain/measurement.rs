@@ -1,12 +1,12 @@
+use crate::domain::PhysicalDeviceId;
 use chrono::{DateTime, Utc};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasurementKind {
     Temperature,
     Humidity,
     Pressure,
 }
-
-type PhysicalDeviceId = u64;
 
 pub struct Observation {
     pub physical_device_id: PhysicalDeviceId,
