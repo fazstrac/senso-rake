@@ -1,25 +1,53 @@
 use crate::domain::{LogicalSensorId, PhysicalDeviceId};
 use chrono::{DateTime, Utc};
 
+#[allow(dead_code)]
+pub struct PhysicalDevice {
+    id: PhysicalDeviceId,
+    identity: PhysicalDeviceIdentity,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    battery_ok: Option<bool>,
+    rssi: Option<f64>,
+}
+
+impl PhysicalDevice {
+    pub fn new(
+        id: PhysicalDeviceId,
+        identity: PhysicalDeviceIdentity,
+        first_seen: DateTime<Utc>,
+        last_seen: DateTime<Utc>,
+        battery_ok: Option<bool>,
+        rssi: Option<f64>,
+    ) -> PhysicalDevice {
+        PhysicalDevice {
+            id,
+            identity,
+            first_seen,
+            last_seen,
+            battery_ok,
+            rssi,
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub struct LogicalSensor {
+    id: LogicalSensorId,
+    display_name: String,
+}
+
+impl LogicalSensor {
+    pub fn new(id: LogicalSensorId, display_name: String) -> LogicalSensor {
+        LogicalSensor { id, display_name }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PhysicalDeviceIdentity {
-    pub model: String,
-    pub reported_id: String,
-    pub channel: Option<String>,
-}
-
-pub struct PhysicalDevice {
-    pub id: PhysicalDeviceId,
-    pub identity: PhysicalDeviceIdentity,
-    pub first_seen: DateTime<Utc>,
-    pub last_seen: DateTime<Utc>,
-    pub battery_ok: Option<bool>,
-    pub rssi: Option<f64>,
-}
-
-pub struct LogicalSensor {
-    pub id: LogicalSensorId,
-    pub display_name: String,
+    model: String,
+    reported_id: String,
+    channel: Option<String>,
 }
 
 // Define PartialEq explicitly to be able define the equality
@@ -32,23 +60,26 @@ impl PartialEq for PhysicalDeviceIdentity {
     }
 }
 
+impl PhysicalDeviceIdentity {
+    pub fn new(model: String, reported_id: String, channel: Option<String>) -> Self {
+        PhysicalDeviceIdentity {
+            model,
+            reported_id,
+            channel,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::domain::PhysicalDeviceIdentity;
+    use super::*;
 
     #[test]
     fn physicaldeviceidentity_should_be_equal_with_itself() {
-        let identity1 = PhysicalDeviceIdentity {
-            model: "Test".into(),
-            reported_id: "245".into(),
-            channel: Some("Channel".into()),
-        };
+        let identity1 =
+            PhysicalDeviceIdentity::new("Test".into(), "245".into(), Some("Channel".into()));
 
-        let identity2 = PhysicalDeviceIdentity {
-            model: "Test".into(),
-            reported_id: "245".into(),
-            channel: None,
-        };
+        let identity2 = PhysicalDeviceIdentity::new("Test".into(), "245".into(), None);
 
         assert_eq!(
             identity1, identity1,
@@ -68,11 +99,7 @@ mod tests {
     }
 
     fn identity(model: &str, reported_id: &str, channel: Option<String>) -> PhysicalDeviceIdentity {
-        PhysicalDeviceIdentity {
-            model: model.into(),
-            reported_id: reported_id.into(),
-            channel,
-        }
+        PhysicalDeviceIdentity::new(model.into(), reported_id.into(), channel)
     }
 
     #[test]
