@@ -4,7 +4,7 @@ mod ids;
 mod interval;
 mod measurement;
 
-pub use binding::SeriesBinding;
+pub use binding::{SeriesBinding, SeriesBindingConflict};
 pub use device::{
     LogicalSensor, LogicalSensorError, PhysicalDevice, PhysicalDeviceError, PhysicalDeviceIdentity,
     PhysicalDeviceIdentityError,
