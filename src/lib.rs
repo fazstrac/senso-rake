@@ -1,4 +1,5 @@
 // src/lib.rs
+pub mod application;
 pub mod database;
 pub mod domain;
 pub mod http;
