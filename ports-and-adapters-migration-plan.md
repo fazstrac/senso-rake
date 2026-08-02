@@ -310,13 +310,107 @@ DuckDB.
 
 This is the first complete vertical slice.
 
-1. Define application use cases for listing discovered physical devices and
-   creating/listing logical sensors.
-2. Define only the output operations those services need.
-3. Implement them through a DuckDB adapter backed by `DbHandle`.
-4. Return typed data from the adapter; do not expose raw DuckDB JSON strings.
-5. Change the HTTP handlers to call input ports and translate DTOs.
-6. Adapt the current UI to the explicit physical-device/logical-sensor model.
+#### Phase 2.1: Name the compatibility slice
+
+The current `/mappings` API mixes two concepts:
+
+- discovered physical devices from `data_landing` / `all_sensors`; and
+- user-assigned descriptions from the old `mappings` table.
+
+In Phase 2, keep this behavior working but name it honestly. Treat it as a
+temporary discovered-device assignment view, not as the final `SeriesBinding`
+model.
+
+- [ ] Define a typed read model for one discovered physical device row returned
+  by today's `all_sensors` projection. Include the existing response fields:
+  `mapping_id`, `model`, `id`, `last_seen`, `latest_ulid`, `description`,
+  `validity_start`, and `deleted`.
+- [ ] Decide whether this compatibility read model lives in the application
+  layer or in a temporary compatibility module. Do not put SQL-shaped DTOs in
+  `domain`.
+- [ ] Record in code comments that this read model wraps legacy mapping
+  behavior and should be replaced by physical-device/logical-sensor/binding
+  read models in Phase 3.
+
+#### Phase 2.2: Define application input use cases
+
+Start with use cases that preserve existing HTTP behavior. Avoid adding use
+cases for the final binding model yet.
+
+- [ ] Define an input-port/application service method to list discovered
+  devices with their current legacy assignment state.
+- [ ] Define an input-port/application service method to assign a discovered
+  physical identity to a logical display name using the current legacy
+  `mappings` table.
+- [ ] Define input-port/application service methods to soft-delete and restore
+  one legacy assignment, preserving the current idempotent `204` behavior.
+- [ ] Define an input-port/application service method to list logical sensor
+  names/descriptions known through the current legacy mapping table, if the UI
+  needs it during this phase.
+- [ ] Keep validation rules in the application layer: non-empty model,
+  reported ID, and display name/description; duplicate assignment conflicts;
+  and typed not-found/conflict/validation errors where behavior is no longer
+  intentionally idempotent.
+
+#### Phase 2.3: Define only the output operations those use cases need
+
+The output port should describe what the application needs, not how DuckDB
+executes it.
+
+- [ ] Add a narrow output trait for the compatibility assignment slice, for
+  example operations shaped like:
+  - list discovered devices with assignment state;
+  - create a legacy assignment;
+  - soft-delete a legacy assignment by ID;
+  - restore a legacy assignment by ID; and
+  - list known logical display names/descriptions, if needed.
+- [ ] Return typed structs from the output port. Do not return DuckDB JSON
+  strings, raw SQL rows, or `serde_json::Value`.
+- [ ] Keep `DbHandle`, SQL strings, DuckDB parameter binding, and JSON
+  deserialization out of the application/domain boundary.
+- [ ] Write application-service tests against a fake output port before
+  changing the HTTP handlers.
+
+#### Phase 2.4: Implement the DuckDB adapter
+
+Keep DuckDB behind its existing single-owner worker. This phase adapts
+`DbHandle`; it does not replace it.
+
+- [ ] Implement the output trait with a DuckDB-backed adapter that uses
+  `DbHandle`.
+- [ ] Move the existing `/mappings` SQL from `src/http/service.rs` into this
+  adapter.
+- [ ] Parse `DbHandle` JSON responses into typed adapter/application structs
+  inside the adapter.
+- [ ] Preserve current SQL behavior unless a deliberate behavior change is
+  listed and tested.
+- [ ] Add repository/adapter tests using real in-memory DuckDB.
+
+#### Phase 2.5: Move HTTP handlers onto input ports
+
+HTTP should become a driving adapter: translate requests into input-port calls,
+then translate typed results/errors into HTTP responses.
+
+- [ ] Change router state from concrete `DbHandle` to the application input
+  port needed by the mapping/discovery handlers.
+- [ ] Keep HTTP request and response DTOs in `src/http`.
+- [ ] Translate HTTP payloads into application commands.
+- [ ] Translate typed application errors into HTTP status codes:
+  validation errors to `400`, duplicate assignment conflicts to `409`,
+  unexpected infrastructure errors to `500`, and idempotent delete/restore to
+  `204` as today.
+- [ ] Update existing router tests to use fake input ports.
+- [ ] Retain at least one router-to-in-memory-DuckDB integration test for the
+  full compatibility slice.
+
+#### Phase 2.6: Update the UI only after the backend seam is clear
+
+- [ ] Keep the current UI behavior working against the compatibility API while
+  the backend seam is introduced.
+- [ ] If UI wording changes during this phase, prefer vocabulary such as
+  discovered device, assignment, and logical display name over final
+  `SeriesBinding` language.
+- [ ] Defer per-measurement-kind binding UI until Phase 3.
 
 During this phase, the old `mappings` table may be wrapped temporarily. Do not
 force it to masquerade as the final series-binding model. Record any temporary
@@ -329,17 +423,12 @@ DuckDB; at least one end-to-end router-to-DuckDB test covers the slice.
 
 Introduce the actual continuity model.
 
-1. Add logical-sensor and series-binding schema migrations.
-2. Store one binding per physical device, measurement kind, logical sensor,
-   and half-open validity interval.
-3. Enforce overlap invariants in the application service and, where practical,
-   protect them transactionally in persistence.
-4. Add use cases to create a binding, close it at a selected time, list binding
-   history, and inspect conflicts.
-5. Make conflict responses structured enough for the UI to present choices.
-6. Migrate existing mapping records deliberately; because old records do not
-   distinguish measurement kinds, expansion into per-kind bindings may require
-   inspecting observed capabilities or user confirmation.
+- [ ] Add logical-sensor and series-binding schema migrations.
+- [ ] Store one binding per physical device, measurement kind, logical sensor, and half-open validity interval.
+- [ ] Enforce overlap invariants in the application service and, where practical, protect them transactionally in persistence.
+- [ ] Add use cases to create a binding, close it at a selected time, list binding history, and inspect conflicts.
+- [ ] Make conflict responses structured enough for the UI to present choices.
+- [ ] Migrate existing mapping records deliberately; because old records do not distinguish measurement kinds, expansion into per-kind bindings may require inspecting observed capabilities or user confirmation.
 
 Soft deletion should not substitute for temporal history. Correcting erroneous
 administrative records may still require an audit/cancellation mechanism, but
