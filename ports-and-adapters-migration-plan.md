@@ -265,7 +265,7 @@ Migrate in vertical, reviewable slices. Do not build every final directory and
 trait before connecting one complete use case. Each phase below must leave the
 application runnable.
 
-### Phase 0: Establish Characterization Tests
+### Phase 0: Establish Characterization Tests - *DONE*
 
 Before moving boundaries, capture the behavior that is meant to survive.
 
@@ -283,18 +283,18 @@ Before moving boundaries, capture the behavior that is meant to survive.
 Gate: `cargo fmt`, strict Clippy, and all Rust tests pass. Tests document any
 temporarily preserved behavior that is scheduled to change later.
 
-### Phase 1: Introduce the Domain Vocabulary
+### Phase 1: Introduce the Domain Vocabulary - *DONE*
 
 Replace the current transport/database-shaped draft entities with the agreed
 domain concepts, initially without rewiring runtime behavior:
 
-- stable ID newtypes;
-- `PhysicalDeviceIdentity` and `PhysicalDevice`;
-- `MeasurementKind`;
-- `Observation`;
-- `LogicalSensor`;
-- `SeriesBinding` with half-open intervals; and
-- typed validation/conflict errors.
+- [x] stable ID newtypes;
+- [x] `PhysicalDeviceIdentity` and `PhysicalDevice`;
+- [x] `MeasurementKind`;
+- [x] `Observation`;
+- [x] `LogicalSensor`;
+- [x] `SeriesBinding` with half-open intervals; and
+- [x] typed validation/conflict errors.
 
 Keep HTTP request/response DTOs in the HTTP adapter. Keep DuckDB row structures
 in the DuckDB adapter. Derive Serde on domain types only when serialization is
