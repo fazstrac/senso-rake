@@ -1,3 +1,7 @@
+// Compatibility application service for the current `/mappings` behavior.
+// This wraps discovered-device rows plus legacy mapping-table assignments.
+// It is not the final time-bounded SeriesBinding model.
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 

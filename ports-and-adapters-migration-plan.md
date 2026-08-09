@@ -321,14 +321,14 @@ In Phase 2, keep this behavior working but name it honestly. Treat it as a
 temporary discovered-device assignment view, not as the final `SeriesBinding`
 model.
 
-- [ ] Define a typed read model for one discovered physical device row returned
+- [x] Define a typed read model for one discovered physical device row returned
   by today's `all_sensors` projection. Include the existing response fields:
   `mapping_id`, `model`, `id`, `last_seen`, `latest_ulid`, `description`,
   `validity_start`, and `deleted`.
-- [ ] Decide whether this compatibility read model lives in the application
+- [x] Decide whether this compatibility read model lives in the application
   layer or in a temporary compatibility module. Do not put SQL-shaped DTOs in
   `domain`.
-- [ ] Record in code comments that this read model wraps legacy mapping
+- [x] Record in code comments that this read model wraps legacy mapping
   behavior and should be replaced by physical-device/logical-sensor/binding
   read models in Phase 3.
 
