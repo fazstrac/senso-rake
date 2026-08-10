@@ -337,17 +337,16 @@ model.
 Start with use cases that preserve existing HTTP behavior. Avoid adding use
 cases for the final binding model yet.
 
-- [ ] Define an input-port/application service method to list discovered
+- [x] Define an input-port/application service method to list discovered
   devices with their current legacy assignment state.
-- [ ] Define an input-port/application service method to assign a discovered
+- [x] Define an input-port/application service method to assign a discovered
   physical identity to a logical display name using the current legacy
   `mappings` table.
-- [ ] Define input-port/application service methods to soft-delete and restore
+- [x] Define input-port/application service methods to soft-delete and restore
   one legacy assignment, preserving the current idempotent `204` behavior.
-- [ ] Define an input-port/application service method to list logical sensor
-  names/descriptions known through the current legacy mapping table, if the UI
-  needs it during this phase.
-- [ ] Keep validation rules in the application layer: non-empty model,
+- [x] Confirm that a separate operation for listing logical sensor
+  names/descriptions is not needed by the current UI; defer it until required.
+- [x] Keep validation rules in the application layer: non-empty model,
   reported ID, and display name/description; duplicate assignment conflicts;
   and typed not-found/conflict/validation errors where behavior is no longer
   intentionally idempotent.
@@ -357,18 +356,20 @@ cases for the final binding model yet.
 The output port should describe what the application needs, not how DuckDB
 executes it.
 
-- [ ] Add a narrow output trait for the compatibility assignment slice, for
+- [x] Add a narrow output trait for the compatibility assignment slice, for
   example operations shaped like:
   - list discovered devices with assignment state;
   - create a legacy assignment;
   - soft-delete a legacy assignment by ID;
   - restore a legacy assignment by ID; and
   - list known logical display names/descriptions, if needed.
-- [ ] Return typed structs from the output port. Do not return DuckDB JSON
+- [x] Confirm that a separate operation for listing logical sensor
+  names/descriptions is not needed by the current UI; defer it until required.
+- [x] Return typed structs from the output port. Do not return DuckDB JSON
   strings, raw SQL rows, or `serde_json::Value`.
-- [ ] Keep `DbHandle`, SQL strings, DuckDB parameter binding, and JSON
+- [x] Keep `DbHandle`, SQL strings, DuckDB parameter binding, and JSON
   deserialization out of the application/domain boundary.
-- [ ] Write application-service tests against a fake output port before
+- [x] Write application-service tests against a fake output port before
   changing the HTTP handlers.
 
 #### Phase 2.4: Implement the DuckDB adapter

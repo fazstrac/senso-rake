@@ -1,6 +1,14 @@
 // Compatibility application service for the current `/mappings` behavior.
 // This wraps discovered-device rows plus legacy mapping-table assignments.
 // It is not the final time-bounded SeriesBinding model.
+//
+// Note: Error mapping behaviour in `soft_delete_assignment` and
+// `restore_assignment` is a little counterintuitive (only return
+// Unexpected if that is received, and nonexisting assignment
+// is mapped into Ok(())). This is to stay aligned with current
+// implementation, where elete and restore are idempotent with respect
+// to a missing assignment. Infrastructure failures remain visible as
+// Unexpected.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -13,7 +21,6 @@ pub struct CreateLegacyAssignment {
     pub validity_start: DateTime<Utc>,
 }
 
-// TODO Change this according to need
 #[derive(Debug, PartialEq)]
 pub struct CreatedLegacyAssignment {
     pub mapping_id: i64,
@@ -51,7 +58,6 @@ pub enum LegacyAssignmentServiceInvalidAssignmentField {
 #[derive(Debug, PartialEq)]
 pub enum LegacyAssignmentServiceError {
     Unexpected,
-    AssignmentNotFound,
     AssignmentAlreadyExists,
     InvalidAssignment(LegacyAssignmentServiceInvalidAssignmentField),
 }
@@ -134,12 +140,12 @@ where
         self.repository
             .soft_delete_assignment(mapping_id)
             .await
-            .map_err(|e| match e {
-                LegacyAssignmentRepositoryError::AssignmentNotFound => {
-                    LegacyAssignmentServiceError::AssignmentNotFound
-                }
-                _ => LegacyAssignmentServiceError::Unexpected,
+            .or_else(|error| match error {
+                LegacyAssignmentRepositoryError::AssignmentNotFound => Ok(()),
+                other => Err(other),
             })
+            // This behavior is intended to maintain the current idempotency
+            .map_err(|_e| LegacyAssignmentServiceError::Unexpected)
     }
 
     pub async fn restore_assignment(
@@ -149,12 +155,12 @@ where
         self.repository
             .restore_assignment(mapping_id)
             .await
-            .map_err(|e| match e {
-                LegacyAssignmentRepositoryError::AssignmentNotFound => {
-                    LegacyAssignmentServiceError::AssignmentNotFound
-                }
-                _ => LegacyAssignmentServiceError::Unexpected,
+            .or_else(|error| match error {
+                LegacyAssignmentRepositoryError::AssignmentNotFound => Ok(()),
+                other => Err(other),
             })
+            // This behavior is intended to maintain the current idempotency
+            .map_err(|_e| LegacyAssignmentServiceError::Unexpected)
     }
 }
 
@@ -177,6 +183,12 @@ mod tests {
         create_assignment: usize,
         soft_delete_assignment: usize,
         restore_assignment: usize,
+    }
+
+    #[derive(Default, Debug, PartialEq)]
+    struct FakeRepositoryIDs {
+        soft_delete_mapping_id: Option<i64>,
+        restore_mapping_id: Option<i64>,
     }
 
     fn test_helper_time() -> DateTime<Utc> {
@@ -223,12 +235,14 @@ mod tests {
         pub restore_assignment_response: FakeRepositoryResponse,
         pub call_counts: Arc<Mutex<FakeRepositoryCalls>>,
         pub create_assignment_called_with: Arc<Mutex<Option<CreateLegacyAssignment>>>,
+        pub mapping_id_argument: Arc<Mutex<FakeRepositoryIDs>>,
     }
 
     impl FakeRepository {
         pub fn new(
             call_counts: Arc<Mutex<FakeRepositoryCalls>>,
             create_assignment_called_with: Arc<Mutex<Option<CreateLegacyAssignment>>>,
+            mapping_id_argument: Arc<Mutex<FakeRepositoryIDs>>,
         ) -> Self {
             let ts1 = test_helper_time();
 
@@ -249,6 +263,7 @@ mod tests {
                 restore_assignment_response: FakeRepositoryResponse::Succeed,
                 call_counts,
                 create_assignment_called_with,
+                mapping_id_argument,
             }
         }
 
@@ -288,9 +303,13 @@ mod tests {
 
         async fn soft_delete_assignment(
             &self,
-            _mapping_id: i64,
+            mapping_id: i64,
         ) -> Result<(), LegacyAssignmentRepositoryError> {
             self.call_counts.lock().unwrap().soft_delete_assignment += 1;
+            self.mapping_id_argument
+                .lock()
+                .unwrap()
+                .soft_delete_mapping_id = Some(mapping_id);
 
             match self.soft_delete_response {
                 FakeRepositoryResponse::Succeed => Ok(()),
@@ -303,9 +322,10 @@ mod tests {
 
         async fn restore_assignment(
             &self,
-            _mapping_id: i64,
+            mapping_id: i64,
         ) -> Result<(), LegacyAssignmentRepositoryError> {
             self.call_counts.lock().unwrap().restore_assignment += 1;
+            self.mapping_id_argument.lock().unwrap().restore_mapping_id = Some(mapping_id);
 
             match self.restore_assignment_response {
                 FakeRepositoryResponse::Succeed => Ok(()),
@@ -321,8 +341,13 @@ mod tests {
     fn smoke_test() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         LegacyAssignmentService::new(repo);
 
@@ -336,8 +361,13 @@ mod tests {
     async fn list_discovered_assignments_success() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
         repo.list_discovered_assignments_response = FakeRepositoryResponse::Succeed;
 
         let assignments = repo.get_assignments();
@@ -357,8 +387,13 @@ mod tests {
     async fn list_discovered_assignments_failure() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
         repo.list_discovered_assignments_response = FakeRepositoryResponse::FailGeneric;
 
         let app_svc = LegacyAssignmentService::new(repo);
@@ -375,8 +410,13 @@ mod tests {
     async fn create_assignment_success() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.create_assignment_response = FakeRepositoryResponse::Succeed;
         let app_svc = LegacyAssignmentService::new(repo);
@@ -398,8 +438,13 @@ mod tests {
     async fn create_assignment_already_exists() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.create_assignment_response = FakeRepositoryResponse::FailAlreadyExists;
 
@@ -419,8 +464,13 @@ mod tests {
     async fn create_assignment_generic_failure() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.create_assignment_response = FakeRepositoryResponse::FailGeneric;
 
@@ -438,8 +488,13 @@ mod tests {
     async fn create_assignment_empty_model_field() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.create_assignment_response = FakeRepositoryResponse::FailGeneric;
 
@@ -467,8 +522,13 @@ mod tests {
     async fn create_assignment_empty_reported_id_field() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.create_assignment_response = FakeRepositoryResponse::FailGeneric;
 
@@ -496,8 +556,13 @@ mod tests {
     async fn create_assignment_empty_description_field() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
         repo.create_assignment_response = FakeRepositoryResponse::FailGeneric;
 
         let mut assignment = test_helper_assignment();
@@ -527,37 +592,53 @@ mod tests {
     async fn soft_delete_assignment_success() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.soft_delete_response = FakeRepositoryResponse::Succeed;
-
+        let mapping_id = 126;
         let app_svc = LegacyAssignmentService::new(repo);
-        let res = app_svc.soft_delete_assignment(1).await;
+        let res = app_svc.soft_delete_assignment(mapping_id).await;
 
         assert_eq!(res.unwrap(), ());
 
+        assert_eq!(
+            mapping_id_argument.lock().unwrap().soft_delete_mapping_id,
+            Some(mapping_id),
+        );
         assert_eq!(calls.lock().unwrap().list_assignments, 0);
         assert_eq!(calls.lock().unwrap().create_assignment, 0);
         assert_eq!(calls.lock().unwrap().restore_assignment, 0);
     }
 
     #[tokio::test]
-    async fn soft_delete_assignment_failure_doesnotexit() {
+    async fn soft_delete_assignment_not_found_is_idempotent_success() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
         repo.soft_delete_response = FakeRepositoryResponse::DoesNotExist;
 
+        let mapping_id = 127;
         let app_svc = LegacyAssignmentService::new(repo);
-        let res = app_svc.soft_delete_assignment(1).await;
+        let res = app_svc.soft_delete_assignment(mapping_id).await;
+
+        assert_eq!(res, Ok(()));
 
         assert_eq!(
-            res.err(),
-            Some(LegacyAssignmentServiceError::AssignmentNotFound)
+            mapping_id_argument.lock().unwrap().soft_delete_mapping_id,
+            Some(mapping_id),
         );
-
         assert_eq!(calls.lock().unwrap().list_assignments, 0);
         assert_eq!(calls.lock().unwrap().create_assignment, 0);
         assert_eq!(calls.lock().unwrap().restore_assignment, 0);
@@ -567,16 +648,26 @@ mod tests {
     async fn soft_delete_assignment_failure_generic() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.soft_delete_response = FakeRepositoryResponse::FailGeneric;
 
+        let mapping_id = 128;
         let app_svc = LegacyAssignmentService::new(repo);
-        let res = app_svc.soft_delete_assignment(1).await;
+        let res = app_svc.soft_delete_assignment(mapping_id).await;
 
         assert_eq!(res.err(), Some(LegacyAssignmentServiceError::Unexpected));
 
+        assert_eq!(
+            mapping_id_argument.lock().unwrap().soft_delete_mapping_id,
+            Some(mapping_id),
+        );
         assert_eq!(calls.lock().unwrap().list_assignments, 0);
         assert_eq!(calls.lock().unwrap().create_assignment, 0);
         assert_eq!(calls.lock().unwrap().restore_assignment, 0);
@@ -586,38 +677,55 @@ mod tests {
     async fn restore_assignment_success() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.restore_assignment_response = FakeRepositoryResponse::Succeed;
 
+        let mapping_id = 129;
         let app_svc = LegacyAssignmentService::new(repo);
-        let res = app_svc.restore_assignment(1).await;
+        let res = app_svc.restore_assignment(mapping_id).await;
 
         assert_eq!(res.unwrap(), ());
 
+        assert_eq!(
+            mapping_id_argument.lock().unwrap().restore_mapping_id,
+            Some(mapping_id),
+        );
         assert_eq!(calls.lock().unwrap().list_assignments, 0);
         assert_eq!(calls.lock().unwrap().create_assignment, 0);
         assert_eq!(calls.lock().unwrap().soft_delete_assignment, 0);
     }
 
     #[tokio::test]
-    async fn restore_assignment_failure_doesnotexit() {
+    async fn restore_assignment_failure_not_found_is_idempotent_success() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.restore_assignment_response = FakeRepositoryResponse::DoesNotExist;
 
+        let mapping_id = 130;
         let app_svc = LegacyAssignmentService::new(repo);
-        let res = app_svc.restore_assignment(1).await;
+        let res = app_svc.restore_assignment(mapping_id).await;
+
+        assert_eq!(res, Ok(()));
 
         assert_eq!(
-            res.err(),
-            Some(LegacyAssignmentServiceError::AssignmentNotFound)
+            mapping_id_argument.lock().unwrap().restore_mapping_id,
+            Some(mapping_id),
         );
-
         assert_eq!(calls.lock().unwrap().list_assignments, 0);
         assert_eq!(calls.lock().unwrap().create_assignment, 0);
         assert_eq!(calls.lock().unwrap().soft_delete_assignment, 0);
@@ -627,16 +735,26 @@ mod tests {
     async fn restore_assignment_failure_generic() {
         let calls = Arc::new(Mutex::new(FakeRepositoryCalls::default()));
         let create_assignment_called_with = Arc::new(Mutex::new(None));
+        let mapping_id_argument = Arc::new(Mutex::new(FakeRepositoryIDs::default()));
 
-        let mut repo = FakeRepository::new(calls.clone(), create_assignment_called_with.clone());
+        let mut repo = FakeRepository::new(
+            calls.clone(),
+            create_assignment_called_with.clone(),
+            mapping_id_argument.clone(),
+        );
 
         repo.restore_assignment_response = FakeRepositoryResponse::FailGeneric;
 
+        let mapping_id = 131;
         let app_svc = LegacyAssignmentService::new(repo);
-        let res = app_svc.restore_assignment(1).await;
+        let res = app_svc.restore_assignment(mapping_id).await;
 
         assert_eq!(res.err(), Some(LegacyAssignmentServiceError::Unexpected));
 
+        assert_eq!(
+            mapping_id_argument.lock().unwrap().restore_mapping_id,
+            Some(mapping_id),
+        );
         assert_eq!(calls.lock().unwrap().list_assignments, 0);
         assert_eq!(calls.lock().unwrap().create_assignment, 0);
         assert_eq!(calls.lock().unwrap().soft_delete_assignment, 0);
