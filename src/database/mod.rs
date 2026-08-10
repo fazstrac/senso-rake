@@ -1,6 +1,9 @@
+mod legacy_assignments;
 mod service;
 
 pub mod schema; // Needed for integration tests
+pub use crate::application::LegacyAssignmentRepositoryError;
+pub use legacy_assignments::DuckDBLegacyAssignmentRepository;
 pub use service::DbHandle;
 pub use service::DbService;
 

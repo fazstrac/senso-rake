@@ -42,6 +42,7 @@ pub struct DiscoveredDeviceAssignment {
     pub deleted: Option<bool>,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum LegacyAssignmentRepositoryError {
     General,
     AssignmentNotFound,
