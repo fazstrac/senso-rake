@@ -47,6 +47,9 @@ pub enum LegacyAssignmentRepositoryError {
     General,
     AssignmentNotFound,
     AssignmentAlreadyExists,
+
+    Persistence,
+    Serialization,
 }
 
 #[derive(Debug, PartialEq)]

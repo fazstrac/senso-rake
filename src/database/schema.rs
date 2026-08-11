@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS mappings (
     id VARCHAR,
     description VARCHAR,
     validity_start TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted BOOLEAN NOT NULL DEFAULT FALSE
+    deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE(model, id, description, validity_start)
 );
 
 CREATE OR REPLACE VIEW temperatures_view AS

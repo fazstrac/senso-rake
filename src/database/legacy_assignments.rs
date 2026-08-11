@@ -8,6 +8,8 @@ use chrono::DateTime;
 use serde::Deserialize;
 use serde_json;
 
+use log::error;
+
 enum LegacyAssignmentQuery<'a> {
     ListDiscoveredAssignments,
     CreateAssignment(&'a CreateLegacyAssignment),
@@ -28,8 +30,14 @@ impl TryFrom<CreatedDuckDBLegacyAssignment> for CreatedLegacyAssignment {
     type Error = LegacyAssignmentRepositoryError;
 
     fn try_from(value: CreatedDuckDBLegacyAssignment) -> Result<Self, Self::Error> {
-        let validity_start = DateTime::from_timestamp_micros(value.validity_start_us)
-            .ok_or(LegacyAssignmentRepositoryError::General)?;
+        let validity_start =
+            DateTime::from_timestamp_micros(value.validity_start_us).ok_or_else(|| {
+                error!(
+                    "Invalid validity_start timestamp {:?}",
+                    value.validity_start_us
+                );
+                LegacyAssignmentRepositoryError::General
+            })?;
 
         Ok(CreatedLegacyAssignment {
             mapping_id: value.mapping_id,
@@ -57,13 +65,21 @@ impl TryFrom<DiscoveredDuckDBDeviceAssignment> for DiscoveredDeviceAssignment {
     type Error = LegacyAssignmentRepositoryError;
 
     fn try_from(value: DiscoveredDuckDBDeviceAssignment) -> Result<Self, Self::Error> {
-        let last_seen = DateTime::from_timestamp_micros(value.last_seen_us)
-            .ok_or(LegacyAssignmentRepositoryError::General)?;
+        let last_seen = DateTime::from_timestamp_micros(value.last_seen_us).ok_or_else(|| {
+            error!("Invalid last_seen timestamp {}", value.last_seen_us);
+            LegacyAssignmentRepositoryError::Serialization
+        })?;
 
         let validity_start = value
             .validity_start_us
             .map(|ts| {
-                DateTime::from_timestamp_micros(ts).ok_or(LegacyAssignmentRepositoryError::General)
+                DateTime::from_timestamp_micros(ts).ok_or_else(|| {
+                    error!(
+                        "Invalid validity_start timestamp {:?}",
+                        value.validity_start_us
+                    );
+                    LegacyAssignmentRepositoryError::Serialization
+                })
             })
             .transpose()?;
 
@@ -88,7 +104,7 @@ struct LegacyDBQuery {
 impl LegacyAssignmentQuery<'_> {
     fn into_query(self) -> LegacyDBQuery {
         match self {
-            Self::ListDiscoveredAssignments => LegacyDBQuery{sql: "SELECT * FROM all_sensors".into(), params: vec![]}, 
+            Self::ListDiscoveredAssignments => LegacyDBQuery{sql: "SELECT mapping_id, model, id AS reported_id, epoch_us(last_seen) AS last_seen_us, latest_ulid, description, epoch_us(validity_start) AS validity_start_us, deleted FROM all_sensors".into(), params: vec![]},
             Self::CreateAssignment(payload) => LegacyDBQuery{sql: "INSERT INTO mappings (model, id, validity_start, description) VALUES (?, ?, ?, ?) RETURNING mapping_id, model, id as reported_id, description, epoch_us(validity_start) AS validity_start_us".into(), params: vec![
                 payload.model.clone(),
                 payload.reported_id.clone(),
@@ -121,10 +137,10 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .db_handle
             .query(query.sql)
             .await
-            .map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+            .map_err(map_duckdb_error)?;
 
         let rows: Vec<DiscoveredDuckDBDeviceAssignment> =
-            serde_json::from_str(&json).map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+            serde_json::from_str(&json).map_err(map_serde_error)?;
 
         rows.into_iter()
             .map(DiscoveredDeviceAssignment::try_from)
@@ -140,15 +156,15 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .db_handle
             .query_with_params(query.sql, query.params)
             .await
-            .map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+            .map_err(map_duckdb_error)?;
 
         let rows: Vec<CreatedDuckDBLegacyAssignment> =
-            serde_json::from_str(&json).map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+            serde_json::from_str(&json).map_err(map_serde_error)?;
 
         // Force the result into an array of size 1
         let [row]: [CreatedDuckDBLegacyAssignment; 1] = rows
             .try_into()
-            .map_err(|_| LegacyAssignmentRepositoryError::General)?;
+            .map_err(|_e| LegacyAssignmentRepositoryError::Serialization)?;
 
         CreatedLegacyAssignment::try_from(row)
     }
@@ -162,10 +178,9 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .db_handle
             .query_with_params(query.sql, query.params)
             .await
-            .map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+            .map_err(map_duckdb_error)?;
 
-        let data: () =
-            serde_json::from_str(&json).map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+        let data: () = serde_json::from_str(&json).map_err(map_serde_error)?;
 
         Ok(data)
     }
@@ -179,13 +194,29 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .db_handle
             .query_with_params(query.sql, query.params)
             .await
-            .map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+            .map_err(map_duckdb_error)?;
 
-        let data: () =
-            serde_json::from_str(&json).map_err(|_e| LegacyAssignmentRepositoryError::General)?;
+        let data: () = serde_json::from_str(&json).map_err(map_serde_error)?;
 
         Ok(data)
     }
+}
+
+fn map_duckdb_error(e: anyhow::Error) -> LegacyAssignmentRepositoryError {
+    let msg = e.to_string();
+    error!("Repository repository response {msg}");
+
+    if msg.starts_with("Constraint Error: Duplicate key") {
+        LegacyAssignmentRepositoryError::AssignmentAlreadyExists
+    } else {
+        LegacyAssignmentRepositoryError::Persistence
+    }
+}
+
+fn map_serde_error(e: serde_json::Error) -> LegacyAssignmentRepositoryError {
+    error!("Failed to deserialize repository response {e}");
+
+    LegacyAssignmentRepositoryError::Serialization
 }
 
 #[cfg(test)]
@@ -198,7 +229,8 @@ mod tests {
     use crate::database::schema::SCHEMA_SQL;
     use crate::service::Service;
 
-    use crossbeam_channel::unbounded;
+    use crossbeam_channel::{Sender, unbounded};
+    use tokio::task::JoinHandle;
 
     fn test_helper_time() -> DateTime<Utc> {
         NaiveDate::from_ymd_opt(2026, 8, 2)
@@ -231,11 +263,44 @@ mod tests {
         }
     }
 
+    struct RepositoryFixture {
+        repository: DuckDBLegacyAssignmentRepository,
+        shutdown_tx: Sender<()>,
+        join_handle: JoinHandle<()>,
+    }
+
+    impl RepositoryFixture {
+        async fn new() -> Self {
+            let (db_shutdown_tx, db_shutdown_rx) = unbounded();
+            let db_svc = DbService::new(None, db_shutdown_rx).unwrap();
+            let db_handle = db_svc.get_handle();
+            let join_handle = db_svc.start().await.unwrap();
+            let _res = db_handle.query(SCHEMA_SQL.to_string()).await;
+
+            let repo = DuckDBLegacyAssignmentRepository::new(db_handle);
+
+            Self {
+                repository: repo,
+                shutdown_tx: db_shutdown_tx,
+                join_handle,
+            }
+        }
+
+        async fn shutdown(self) {
+            self.shutdown_tx.send(()).unwrap();
+            self.join_handle.await.unwrap();
+        }
+    }
+
+    //
+    // TESTS
+    //
+
     #[test]
     fn legacy_assignment_list_discovered_assignments_correct_sql() {
         let query = LegacyAssignmentQuery::ListDiscoveredAssignments.into_query();
 
-        assert_eq!(query.sql, "SELECT * FROM all_sensors".to_string());
+        assert_eq!(query.sql, "SELECT mapping_id, model, id AS reported_id, epoch_us(last_seen) AS last_seen_us, latest_ulid, description, epoch_us(validity_start) AS validity_start_us, deleted FROM all_sensors".to_string());
         assert_eq!(query.params.len(), 0);
     }
 
@@ -287,24 +352,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mapping_against_in_memory_duckdb() {
-        let (db_shutdown_tx, db_shutdown_rx) = unbounded();
-        let db_svc = DbService::new(None, db_shutdown_rx).unwrap();
-        let db_handle = db_svc.get_handle();
-        let join_handle = db_svc.start().await.unwrap();
-        let res = db_handle.query(SCHEMA_SQL.to_string()).await;
+    async fn test_create_assignment_success() {
+        let fixture = RepositoryFixture::new().await;
 
-        assert_eq!(res.unwrap(), "[]".to_string());
-
-        let command = test_helper_assignment();
-        let repo = DuckDBLegacyAssignmentRepository::new(db_handle);
-
-        let res = repo.create_assignment(command).await;
+        let res = fixture
+            .repository
+            .create_assignment(test_helper_assignment())
+            .await;
 
         assert_eq!(res.unwrap(), test_helper_create_expected_assignment());
+        fixture.shutdown().await;
+    }
 
-        db_shutdown_tx.send(()).unwrap();
+    #[tokio::test]
+    async fn test_create_assignment_duplicate_should_fail() {
+        let fixture = RepositoryFixture::new().await;
 
-        join_handle.await.unwrap();
+        let res1 = fixture
+            .repository
+            .create_assignment(test_helper_assignment())
+            .await;
+        assert_eq!(res1.unwrap(), test_helper_create_expected_assignment());
+
+        let res2 = fixture
+            .repository
+            .create_assignment(test_helper_assignment())
+            .await;
+        assert_eq!(
+            res2.err().unwrap(),
+            LegacyAssignmentRepositoryError::AssignmentAlreadyExists
+        );
+
+        fixture.shutdown().await;
     }
 }
