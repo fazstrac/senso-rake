@@ -8,8 +8,6 @@ use chrono::DateTime;
 use serde::Deserialize;
 use serde_json;
 
-// src/database/legacy_assignments.rs
-
 enum LegacyAssignmentQuery<'a> {
     ListDiscoveredAssignments,
     CreateAssignment(&'a CreateLegacyAssignment),
@@ -17,7 +15,7 @@ enum LegacyAssignmentQuery<'a> {
     RestoreAssignment(i64),
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize)]
 struct CreatedDuckDBLegacyAssignment {
     mapping_id: i64,
     model: String,
@@ -26,18 +24,18 @@ struct CreatedDuckDBLegacyAssignment {
     validity_start_us: i64,
 }
 
-impl CreatedDuckDBLegacyAssignment {
-    fn into_created_legacy_assignment(
-        self,
-    ) -> Result<CreatedLegacyAssignment, LegacyAssignmentRepositoryError> {
-        let validity_start = DateTime::from_timestamp_micros(self.validity_start_us)
+impl TryFrom<CreatedDuckDBLegacyAssignment> for CreatedLegacyAssignment {
+    type Error = LegacyAssignmentRepositoryError;
+
+    fn try_from(value: CreatedDuckDBLegacyAssignment) -> Result<Self, Self::Error> {
+        let validity_start = DateTime::from_timestamp_micros(value.validity_start_us)
             .ok_or(LegacyAssignmentRepositoryError::General)?;
 
         Ok(CreatedLegacyAssignment {
-            mapping_id: self.mapping_id,
-            model: self.model.clone(),
-            reported_id: self.reported_id.clone(),
-            description: self.description.clone(),
+            mapping_id: value.mapping_id,
+            model: value.model,
+            reported_id: value.reported_id,
+            description: value.description,
             validity_start,
         })
     }
@@ -55,14 +53,14 @@ struct DiscoveredDuckDBDeviceAssignment {
     deleted: Option<bool>,
 }
 
-impl DiscoveredDuckDBDeviceAssignment {
-    fn into_discovered_device_assignment(
-        self,
-    ) -> Result<DiscoveredDeviceAssignment, LegacyAssignmentRepositoryError> {
-        let last_seen = DateTime::from_timestamp_micros(self.last_seen_us)
+impl TryFrom<DiscoveredDuckDBDeviceAssignment> for DiscoveredDeviceAssignment {
+    type Error = LegacyAssignmentRepositoryError;
+
+    fn try_from(value: DiscoveredDuckDBDeviceAssignment) -> Result<Self, Self::Error> {
+        let last_seen = DateTime::from_timestamp_micros(value.last_seen_us)
             .ok_or(LegacyAssignmentRepositoryError::General)?;
 
-        let validity_start = self
+        let validity_start = value
             .validity_start_us
             .map(|ts| {
                 DateTime::from_timestamp_micros(ts).ok_or(LegacyAssignmentRepositoryError::General)
@@ -70,14 +68,14 @@ impl DiscoveredDuckDBDeviceAssignment {
             .transpose()?;
 
         Ok(DiscoveredDeviceAssignment {
-            mapping_id: self.mapping_id,
-            model: self.model.clone(),
-            reported_id: self.reported_id.clone(),
+            mapping_id: value.mapping_id,
+            model: value.model,
+            reported_id: value.reported_id,
             last_seen,
-            latest_ulid: self.latest_ulid.clone(),
-            description: self.description.clone(),
+            latest_ulid: value.latest_ulid,
+            description: value.description,
             validity_start,
-            deleted: self.deleted,
+            deleted: value.deleted,
         })
     }
 }
@@ -128,14 +126,9 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
         let rows: Vec<DiscoveredDuckDBDeviceAssignment> =
             serde_json::from_str(&json).map_err(|_e| LegacyAssignmentRepositoryError::General)?;
 
-        let mut ret: Vec<DiscoveredDeviceAssignment> = Vec::new();
-
-        for row in rows {
-            let r = row.into_discovered_device_assignment()?;
-            ret.push(r);
-        }
-
-        Ok(ret)
+        rows.into_iter()
+            .map(DiscoveredDeviceAssignment::try_from)
+            .collect::<Result<Vec<_>, _>>()
     }
 
     async fn create_assignment(
@@ -151,13 +144,13 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
 
         let rows: Vec<CreatedDuckDBLegacyAssignment> =
             serde_json::from_str(&json).map_err(|_e| LegacyAssignmentRepositoryError::General)?;
-        let [row] = rows.as_slice() else {
-            return Err(LegacyAssignmentRepositoryError::General);
-        };
 
-        let ret = row.clone().into_created_legacy_assignment()?;
+        // Force the result into an array of size 1
+        let [row]: [CreatedDuckDBLegacyAssignment; 1] = rows
+            .try_into()
+            .map_err(|_| LegacyAssignmentRepositoryError::General)?;
 
-        Ok(ret)
+        CreatedLegacyAssignment::try_from(row)
     }
 
     async fn soft_delete_assignment(
