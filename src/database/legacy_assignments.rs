@@ -36,7 +36,7 @@ impl TryFrom<CreatedDuckDBLegacyAssignment> for CreatedLegacyAssignment {
                     "Invalid validity_start timestamp {:?}",
                     value.validity_start_us
                 );
-                LegacyAssignmentRepositoryError::General
+                LegacyAssignmentRepositoryError::Serialization
             })?;
 
         Ok(CreatedLegacyAssignment {
@@ -96,8 +96,8 @@ impl TryFrom<DiscoveredDuckDBDeviceAssignment> for DiscoveredDeviceAssignment {
     }
 }
 
-#[derive(Deserialize)]
-struct SoftEraseRestoreDuckDBLegacyAssignment {
+#[derive(Deserialize, Debug)]
+struct UpdatedDuckDbLegacyAssignment {
     mapping_id: i64,
     deleted: bool,
 }
@@ -186,25 +186,10 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .await
             .map_err(map_duckdb_error)?;
 
-        let rows: Vec<SoftEraseRestoreDuckDBLegacyAssignment> =
+        let rows: Vec<UpdatedDuckDbLegacyAssignment> =
             serde_json::from_str(&json).map_err(map_serde_error)?;
 
-        // Did we get anything back from database?
-        if rows.is_empty() {
-            return Err(LegacyAssignmentRepositoryError::AssignmentNotFound);
-        }
-
-        // Is it one row if what we expect it to be?
-        let [row]: [SoftEraseRestoreDuckDBLegacyAssignment; 1] = rows
-            .try_into()
-            .map_err(|_| LegacyAssignmentRepositoryError::Serialization)?;
-
-        // Did the database report back correct values?
-        if row.mapping_id == mapping_id && row.deleted {
-            Ok(())
-        } else {
-            Err(LegacyAssignmentRepositoryError::UnexpectedResponse)
-        }
+        validate_update_response(rows, mapping_id, true)
     }
 
     async fn restore_assignment(
@@ -218,25 +203,10 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .await
             .map_err(map_duckdb_error)?;
 
-        let rows: Vec<SoftEraseRestoreDuckDBLegacyAssignment> =
+        let rows: Vec<UpdatedDuckDbLegacyAssignment> =
             serde_json::from_str(&json).map_err(map_serde_error)?;
 
-        // Did we get anything back from database?
-        if rows.is_empty() {
-            return Err(LegacyAssignmentRepositoryError::AssignmentNotFound);
-        }
-
-        // Is it one row if what we expect it to be?
-        let [row]: [SoftEraseRestoreDuckDBLegacyAssignment; 1] = rows
-            .try_into()
-            .map_err(|_| LegacyAssignmentRepositoryError::Serialization)?;
-
-        // Did the database report back correct values?
-        if row.mapping_id == mapping_id && !row.deleted {
-            Ok(())
-        } else {
-            Err(LegacyAssignmentRepositoryError::UnexpectedResponse)
-        }
+        validate_update_response(rows, mapping_id, false)
     }
 }
 
@@ -255,6 +225,31 @@ fn map_serde_error(e: serde_json::Error) -> LegacyAssignmentRepositoryError {
     error!("Failed to deserialize repository response {e}");
 
     LegacyAssignmentRepositoryError::Serialization
+}
+
+fn validate_update_response(
+    rows: Vec<UpdatedDuckDbLegacyAssignment>,
+    expected_mapping_id: i64,
+    expected_deleted: bool,
+) -> Result<(), LegacyAssignmentRepositoryError> {
+    match rows.as_slice() {
+        [] => Err(LegacyAssignmentRepositoryError::AssignmentNotFound),
+        [row] if row.mapping_id == expected_mapping_id && row.deleted == expected_deleted => Ok(()),
+        [row] => {
+            error!(
+                "Got different responses for assignment update than expected: {:?}",
+                row
+            );
+            Err(LegacyAssignmentRepositoryError::UnexpectedResponse)
+        }
+        [first_row, ..] => {
+            error!(
+                "Got unexpected multi-row response for assignment update. First row: {:?}",
+                first_row
+            );
+            Err(LegacyAssignmentRepositoryError::UnexpectedResponse)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -943,4 +938,90 @@ mod tests {
             Err(LegacyAssignmentRepositoryError::AssignmentNotFound)
         );
     }
+
+    struct TestCase {
+        name: &'static str,
+        rows: Vec<UpdatedDuckDbLegacyAssignment>,
+        expected_id: i64,
+        expected_deleted: bool,
+        expected: Result<(), LegacyAssignmentRepositoryError>,
+    }
+
+    #[test]
+    fn test_validate_update_response_cases() {
+        let testcases = vec![
+            TestCase {
+                name: "correct response",
+                rows: vec![UpdatedDuckDbLegacyAssignment {
+                    mapping_id: 1,
+                    deleted: true,
+                }],
+                expected_id: 1,
+                expected_deleted: true,
+                expected: Ok(()),
+            },
+            TestCase {
+                name: "empty responses",
+                rows: vec![],
+                expected_id: 1,
+                expected_deleted: true,
+                expected: Err(LegacyAssignmentRepositoryError::AssignmentNotFound),
+            },
+            TestCase {
+                name: "parameter `mapping_id` is wrong",
+                rows: vec![UpdatedDuckDbLegacyAssignment {
+                    mapping_id: 1,
+                    deleted: true,
+                }],
+                expected_id: 2,
+                expected_deleted: true,
+                expected: Err(LegacyAssignmentRepositoryError::UnexpectedResponse),
+            },
+            TestCase {
+                name: "parameter `deleted` is wrong",
+                rows: vec![UpdatedDuckDbLegacyAssignment {
+                    mapping_id: 1,
+                    deleted: true,
+                }],
+                expected_id: 1,
+                expected_deleted: false,
+                expected: Err(LegacyAssignmentRepositoryError::UnexpectedResponse),
+            },
+            TestCase {
+                name: "both parameters are wrong",
+                rows: vec![UpdatedDuckDbLegacyAssignment {
+                    mapping_id: 1,
+                    deleted: true,
+                }],
+                expected_id: 2,
+                expected_deleted: false,
+                expected: Err(LegacyAssignmentRepositoryError::UnexpectedResponse),
+            },
+            TestCase {
+                name: "multi-row response",
+                rows: vec![
+                    UpdatedDuckDbLegacyAssignment {
+                        mapping_id: 1,
+                        deleted: true,
+                    },
+                    UpdatedDuckDbLegacyAssignment {
+                        mapping_id: 1,
+                        deleted: true,
+                    },
+                ],
+                expected_id: 1,
+                expected_deleted: true,
+                expected: Err(LegacyAssignmentRepositoryError::UnexpectedResponse),
+            },
+        ];
+
+        for case in testcases {
+            let name = case.name;
+            let res = validate_update_response(case.rows, case.expected_id, case.expected_deleted);
+            assert_eq!(res, case.expected, "{name}");
+        }
+    }
 }
+
+// Note: use this to get logging in tests
+// let _ = env_logger::builder().is_test(true).try_init();
