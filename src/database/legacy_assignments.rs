@@ -370,7 +370,7 @@ mod tests {
             .create_assignment(test_helper_assignment())
             .await;
 
-        assert_eq!(res.unwrap(), test_helper_create_expected_assignment());
+        assert_eq!(res, Ok(test_helper_create_expected_assignment()));
         fixture.shutdown().await;
     }
 
@@ -382,15 +382,15 @@ mod tests {
             .repository
             .create_assignment(test_helper_assignment())
             .await;
-        assert_eq!(res1.unwrap(), test_helper_create_expected_assignment());
+        assert_eq!(res1, Ok(test_helper_create_expected_assignment()));
 
         let res2 = fixture
             .repository
             .create_assignment(test_helper_assignment())
             .await;
         assert_eq!(
-            res2.err().unwrap(),
-            LegacyAssignmentRepositoryError::AssignmentAlreadyExists
+            res2,
+            Err(LegacyAssignmentRepositoryError::AssignmentAlreadyExists)
         );
 
         fixture.shutdown().await;
@@ -401,7 +401,7 @@ mod tests {
         let fixture = RepositoryFixture::new().await;
         let res = fixture.repository.list_discovered_assignments().await;
 
-        assert_eq!(res.unwrap().len(), 0);
+        assert_eq!(res, Ok(Vec::new()));
 
         fixture.shutdown().await;
     }
@@ -700,5 +700,51 @@ mod tests {
         fixture.shutdown().await;
 
         assert_eq!(res, Err(LegacyAssignmentRepositoryError::Serialization));
+    }
+
+    #[tokio::test]
+    async fn list_discovered_assignments_ignores_raw_messages_without_physical_identity() {
+        let fixture = RepositoryFixture::new().await;
+
+        let timestamp = |value: &str| {
+            DateTime::parse_from_rfc3339(value)
+                .unwrap()
+                .with_timezone(&Utc)
+        };
+        let validity_start = timestamp("2026-01-10T00:00:00Z");
+
+        let expected = vec![DiscoveredDeviceAssignment {
+            mapping_id: Some(2),
+            model: "LaCrosse-TX141Bv3".into(),
+            reported_id: "254".into(),
+            last_seen: timestamp("2026-01-10T10:38:14.877032Z"),
+            latest_ulid: "01KEKQREAXF2W8SPTKVW7RD7C6".into(),
+            description: Some("Aapon huone".into()),
+            validity_start: Some(validity_start),
+            deleted: Some(false),
+        }];
+
+        fixture
+            .db_handle
+            .query(
+                r#"BEGIN;
+                   INSERT INTO data_landing (ulid, ts, raw_json) VALUES ('01KEKQQ5MGZTEQHF5PHBPEEW67', TIMESTAMP '2026-01-10 10:37:33.200231', '{"time":"1768041453.200231", "model":"Ambientweather-F007TH", "id": "", "temperature_C":22.61111, "humidity":2}');
+                   INSERT INTO data_landing (ulid, ts, raw_json) VALUES ('01KEKQQ5MGZTEQHF5PHBPEEW67', TIMESTAMP '2026-01-10 10:37:33.200231', '{"time":"1768041453.200231", "model": "", "id":44, "temperature_C":22.61111, "humidity":2, "mic":"CRC"}');
+                   INSERT INTO data_landing (ulid, ts, raw_json) VALUES ('01KEKQQ5MGZTEQHF5PHBPEEW67', TIMESTAMP '2026-01-10 10:37:33.200231', '{"time":"1768041453.200231", "model":"Ambientweather-F007TH", "id": "  ", "temperature_C":22.61111, "humidity":2}');
+                   INSERT INTO data_landing (ulid, ts, raw_json) VALUES ('01KEKQQ5MGZTEQHF5PHBPEEW67', TIMESTAMP '2026-01-10 10:37:33.200231', '{"time":"1768041453.200231", "model": "   ", "id":44, "temperature_C":22.61111, "humidity":2, "mic":"CRC"}');
+                   INSERT INTO data_landing (ulid, ts, raw_json) VALUES ('01KEKQQ5MGZTEQHF5PHBPEEW67', TIMESTAMP '2026-01-10 10:37:33.200231', '{"time":"1768041453.200231", "model":"Ambientweather-F007TH", "temperature_C":22.61111, "humidity":2}');
+                   INSERT INTO data_landing (ulid, ts, raw_json) VALUES ('01KEKQQ5MGZTEQHF5PHBPEEW67', TIMESTAMP '2026-01-10 10:37:33.200231', '{"time":"1768041453.200231", "id":44, "temperature_C":22.61111, "humidity":2, "mic":"CRC"}');
+                   INSERT INTO data_landing (ulid, ts, raw_json) VALUES ('01KEKQREAXF2W8SPTKVW7RD7C6', TIMESTAMP '2026-01-10 10:38:14.877032', '{"time":"1768041494.877032", "model":"LaCrosse-TX141Bv3", "id":254, "temperature_C":20.2}');
+                   INSERT INTO mappings (mapping_id, model, id, description, validity_start, deleted) VALUES (2, 'LaCrosse-TX141Bv3', '254', 'Aapon huone', TIMESTAMP '2026-01-10 00:00:00', false);
+                   INSERT INTO mappings (mapping_id, model, id, description, validity_start, deleted) VALUES (5, 'Ambientweather-F007TH', '44', 'Reitinkaappi', TIMESTAMP '2026-01-10 00:00:00', false);
+                   COMMIT;"#.to_string()
+            )
+            .await
+            .expect("populate repository test database");
+
+        let res = fixture.repository.list_discovered_assignments().await;
+        fixture.shutdown().await;
+
+        assert_eq!(res, Ok(expected));
     }
 }

@@ -203,6 +203,10 @@ SELECT
     mappings.deleted
 FROM cte 
 LEFT JOIN mappings ON mappings.model = cte.model AND mappings.id = cte.id
+WHERE cte.model IS NOT NULL
+  AND cte.id IS NOT NULL
+  AND trim(cte.model) <> ''
+  AND trim(cte.id) <> ''
 ORDER BY mappings.mapping_id;
 "#;
 
