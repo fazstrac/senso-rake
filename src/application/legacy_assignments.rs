@@ -50,6 +50,8 @@ pub enum LegacyAssignmentRepositoryError {
 
     Persistence,
     Serialization,
+
+    UnexpectedResponse,
 }
 
 #[derive(Debug, PartialEq)]
