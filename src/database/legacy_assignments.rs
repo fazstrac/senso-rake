@@ -96,6 +96,12 @@ impl TryFrom<DiscoveredDuckDBDeviceAssignment> for DiscoveredDeviceAssignment {
     }
 }
 
+#[derive(Deserialize)]
+struct SoftEraseRestoreDuckDBLegacyAssignment {
+    mapping_id: i64,
+    deleted: bool,
+}
+
 struct LegacyDBQuery {
     sql: String,
     params: Vec<String>,
@@ -111,8 +117,8 @@ impl LegacyAssignmentQuery<'_> {
                 payload.validity_start.to_rfc3339(),
                 payload.description.clone(),
             ]},
-            Self::SoftDeleteAssignment(id) => LegacyDBQuery{sql: "UPDATE mappings SET deleted = true WHERE mapping_id = ?".into(), params: vec![id.to_string()]},
-            Self::RestoreAssignment(id) => LegacyDBQuery{sql: "UPDATE mappings SET deleted = false WHERE mapping_id = ?".into(), params: vec![id.to_string()]},
+            Self::SoftDeleteAssignment(id) => LegacyDBQuery{sql: "UPDATE mappings SET deleted = true WHERE mapping_id = ? RETURNING mapping_id, deleted".into(), params: vec![id.to_string()]},
+            Self::RestoreAssignment(id) => LegacyDBQuery{sql: "UPDATE mappings SET deleted = false WHERE mapping_id = ? RETURNING mapping_id, deleted".into(), params: vec![id.to_string()]},
         }
     }
 }
@@ -180,9 +186,25 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .await
             .map_err(map_duckdb_error)?;
 
-        let data: () = serde_json::from_str(&json).map_err(map_serde_error)?;
+        let rows: Vec<SoftEraseRestoreDuckDBLegacyAssignment> =
+            serde_json::from_str(&json).map_err(map_serde_error)?;
 
-        Ok(data)
+        // Did we get anything back from database?
+        if rows.is_empty() {
+            return Err(LegacyAssignmentRepositoryError::AssignmentNotFound);
+        }
+
+        // Is it one row if what we expect it to be?
+        let [row]: [SoftEraseRestoreDuckDBLegacyAssignment; 1] = rows
+            .try_into()
+            .map_err(|_| LegacyAssignmentRepositoryError::Serialization)?;
+
+        // Did the database report back correct values?
+        if row.mapping_id == mapping_id && row.deleted {
+            Ok(())
+        } else {
+            Err(LegacyAssignmentRepositoryError::UnexpectedResponse)
+        }
     }
 
     async fn restore_assignment(
@@ -196,9 +218,25 @@ impl LegacyAssignmentRepository for DuckDBLegacyAssignmentRepository {
             .await
             .map_err(map_duckdb_error)?;
 
-        let data: () = serde_json::from_str(&json).map_err(map_serde_error)?;
+        let rows: Vec<SoftEraseRestoreDuckDBLegacyAssignment> =
+            serde_json::from_str(&json).map_err(map_serde_error)?;
 
-        Ok(data)
+        // Did we get anything back from database?
+        if rows.is_empty() {
+            return Err(LegacyAssignmentRepositoryError::AssignmentNotFound);
+        }
+
+        // Is it one row if what we expect it to be?
+        let [row]: [SoftEraseRestoreDuckDBLegacyAssignment; 1] = rows
+            .try_into()
+            .map_err(|_| LegacyAssignmentRepositoryError::Serialization)?;
+
+        // Did the database report back correct values?
+        if row.mapping_id == mapping_id && !row.deleted {
+            Ok(())
+        } else {
+            Err(LegacyAssignmentRepositoryError::UnexpectedResponse)
+        }
     }
 }
 
@@ -333,7 +371,8 @@ mod tests {
 
         assert_eq!(
             query.sql,
-            "UPDATE mappings SET deleted = true WHERE mapping_id = ?".to_string()
+            "UPDATE mappings SET deleted = true WHERE mapping_id = ? RETURNING mapping_id, deleted"
+                .to_string()
         );
 
         let params = query.params;
@@ -349,7 +388,7 @@ mod tests {
 
         assert_eq!(
             query.sql,
-            "UPDATE mappings SET deleted = false WHERE mapping_id = ?".to_string()
+            "UPDATE mappings SET deleted = false WHERE mapping_id = ? RETURNING mapping_id, deleted".to_string()
         );
 
         let params = query.params;
@@ -746,5 +785,162 @@ mod tests {
         fixture.shutdown().await;
 
         assert_eq!(res, Ok(expected));
+    }
+
+    #[tokio::test]
+    async fn soft_delete_assignment_not_deleted_row_success() {
+        let fixture = RepositoryFixture::new().await;
+
+        fixture
+            .db_handle
+            .query(
+                r#"BEGIN;
+                   INSERT INTO mappings (mapping_id, model, id, description, validity_start, deleted) VALUES (1, 'LaCrosse-TX141Bv3', '254', 'Aapon huone', TIMESTAMP '2026-01-10 00:00:00', false);
+                   COMMIT;"#.to_string()
+            )
+            .await
+            .expect("populate repository test database");
+
+        let res = fixture.repository.soft_delete_assignment(1).await;
+        // Check for correct response
+        assert_eq!(res, Ok(()));
+
+        // Now check the change actually happened
+        let rows = fixture
+            .db_handle
+            .query_with_params(
+                "SELECT deleted FROM mappings WHERE mapping_id = ?".into(),
+                vec![1.to_string()],
+            )
+            .await
+            .expect("test database response");
+
+        assert_eq!(rows, r#"[{"deleted":true}]"#);
+
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn soft_delete_assignment_deleted_row_success() {
+        let fixture = RepositoryFixture::new().await;
+
+        fixture
+            .db_handle
+            .query(
+                r#"BEGIN;
+                   INSERT INTO mappings (mapping_id, model, id, description, validity_start, deleted) VALUES (1, 'LaCrosse-TX141Bv3', '254', 'Aapon huone', TIMESTAMP '2026-01-10 00:00:00', true);
+                   COMMIT;"#.to_string()
+            )
+            .await
+            .expect("populate repository test database");
+
+        let res = fixture.repository.soft_delete_assignment(1).await;
+        // Check for correct response
+        assert_eq!(res, Ok(()));
+
+        // Now check the change actually happened
+        let rows = fixture
+            .db_handle
+            .query_with_params(
+                "SELECT deleted FROM mappings WHERE mapping_id = ?".into(),
+                vec![1.to_string()],
+            )
+            .await
+            .expect("test database response");
+
+        assert_eq!(rows, r#"[{"deleted":true}]"#);
+
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn soft_delete_assignment_non_existing_mapping_failure() {
+        let fixture = RepositoryFixture::new().await;
+
+        let res = fixture.repository.soft_delete_assignment(1).await;
+        fixture.shutdown().await;
+
+        assert_eq!(
+            res,
+            Err(LegacyAssignmentRepositoryError::AssignmentNotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_assignment_deleted_row_success() {
+        let fixture = RepositoryFixture::new().await;
+
+        fixture
+            .db_handle
+            .query(
+                r#"BEGIN;
+                   INSERT INTO mappings (mapping_id, model, id, description, validity_start, deleted) VALUES (1, 'LaCrosse-TX141Bv3', '254', 'Aapon huone', TIMESTAMP '2026-01-10 00:00:00', true);
+                   COMMIT;"#.to_string()
+            )
+            .await
+            .expect("populate repository test database");
+
+        let res = fixture.repository.restore_assignment(1).await;
+        // Check for correct response
+        assert_eq!(res, Ok(()));
+
+        // Now check the change actually happened
+        let rows = fixture
+            .db_handle
+            .query_with_params(
+                "SELECT deleted FROM mappings WHERE mapping_id = ?".into(),
+                vec![1.to_string()],
+            )
+            .await
+            .expect("test database response");
+
+        assert_eq!(rows, r#"[{"deleted":false}]"#);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn restore_assignment_not_deleted_row_success() {
+        let fixture = RepositoryFixture::new().await;
+
+        fixture
+            .db_handle
+            .query(
+                r#"BEGIN;
+                   INSERT INTO mappings (mapping_id, model, id, description, validity_start, deleted) VALUES (1, 'LaCrosse-TX141Bv3', '254', 'Aapon huone', TIMESTAMP '2026-01-10 00:00:00', false);
+                   COMMIT;"#.to_string()
+            )
+            .await
+            .expect("populate repository test database");
+
+        let res = fixture.repository.restore_assignment(1).await;
+        // Check for correct response
+        assert_eq!(res, Ok(()));
+
+        // Now check the change actually happened
+        let rows = fixture
+            .db_handle
+            .query_with_params(
+                "SELECT deleted FROM mappings WHERE mapping_id = ?".into(),
+                vec![1.to_string()],
+            )
+            .await
+            .expect("test database response");
+
+        assert_eq!(rows, r#"[{"deleted":false}]"#);
+
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn restore_assignment_non_existing_mapping_failure() {
+        let fixture = RepositoryFixture::new().await;
+
+        let res = fixture.repository.restore_assignment(1).await;
+        fixture.shutdown().await;
+
+        assert_eq!(
+            res,
+            Err(LegacyAssignmentRepositoryError::AssignmentNotFound)
+        );
     }
 }
