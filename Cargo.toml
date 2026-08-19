@@ -23,6 +23,9 @@ log = "0.4.29"
 env_logger = "0.11.8"
 arrow-json = "58"
 
+[build-dependencies]
+sha2 = "0.10.9"
+
 [profile.dev]
 opt-level = 0
 
