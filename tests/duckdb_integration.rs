@@ -5,7 +5,7 @@ use duckdb::Connection;
 
 // Pull real schema SQL and Arrow batch creation from the crate
 use senso_rake::database::DbService;
-use senso_rake::database::schema::SCHEMA_SQL;
+use senso_rake::database::migrate_database;
 use senso_rake::http::build_router;
 use senso_rake::mqtt::mqtt_buffer::{create_arrow_record_batch, process_message};
 use senso_rake::service::Service;
@@ -52,8 +52,9 @@ fn sample_rows() -> Vec<senso_rake::mqtt::mqtt_buffer::ProcessedMsg> {
 #[test]
 fn insert_arrow_batch_into_duckdb_should_error_on_name_mismatch() {
     // Create real DuckDB connection and initialize schema
-    let conn = Connection::open_in_memory().expect("open in-memory duckdb");
-    conn.execute_batch(SCHEMA_SQL)
+    let mut conn = Connection::open_in_memory().expect("open in-memory duckdb");
+    migrate_database(&mut conn)
+        .map_err(|e| anyhow::anyhow!("Migration error {:?}", e))
         .expect("apply real schema SQL");
 
     // Build Arrow RecordBatch from MQTT normalization
@@ -80,9 +81,8 @@ fn insert_arrow_batch_into_duckdb_should_error_on_name_mismatch() {
 #[test]
 fn insert_arrow_batch_into_duckdb_succeeds_when_schema_matches() {
     // Create real DuckDB connection and initialize schema
-    let conn = Connection::open_in_memory().expect("open in-memory duckdb");
-    conn.execute_batch(SCHEMA_SQL)
-        .expect("apply real schema SQL");
+    let mut conn = Connection::open_in_memory().expect("open in-memory duckdb");
+    migrate_database(&mut conn).expect("apply real schema SQL");
 
     // Build original Arrow RecordBatch and then fix the field name to match table schema
     let rows = sample_rows();

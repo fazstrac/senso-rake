@@ -112,10 +112,10 @@ impl LegacyAssignmentQuery<'_> {
         match self {
             Self::ListDiscoveredAssignments => LegacyDBQuery{sql: "SELECT mapping_id, model, id AS reported_id, epoch_us(last_seen) AS last_seen_us, latest_ulid, description, epoch_us(validity_start) AS validity_start_us, deleted FROM all_sensors".into(), params: vec![]},
             Self::CreateAssignment(payload) => LegacyDBQuery{sql: "INSERT INTO mappings (model, id, validity_start, description) VALUES (?, ?, ?, ?) RETURNING mapping_id, model, id as reported_id, description, epoch_us(validity_start) AS validity_start_us".into(), params: vec![
-                payload.model.clone(),
-                payload.reported_id.clone(),
-                payload.validity_start.to_rfc3339(),
-                payload.description.clone(),
+                    payload.model.clone(),
+                    payload.reported_id.clone(),
+                    payload.validity_start.to_rfc3339(),
+                    payload.description.clone(),
             ]},
             Self::SoftDeleteAssignment(id) => LegacyDBQuery{sql: "UPDATE mappings SET deleted = true WHERE mapping_id = ? RETURNING mapping_id, deleted".into(), params: vec![id.to_string()]},
             Self::RestoreAssignment(id) => LegacyDBQuery{sql: "UPDATE mappings SET deleted = false WHERE mapping_id = ? RETURNING mapping_id, deleted".into(), params: vec![id.to_string()]},
@@ -259,7 +259,6 @@ mod tests {
 
     // Pull real schema SQL and Arrow batch creation from the crate
     use crate::database::DbService;
-    use crate::database::schema::SCHEMA_SQL;
     use crate::service::Service;
 
     use crossbeam_channel::{Sender, unbounded};
@@ -310,10 +309,6 @@ mod tests {
 
             let db_handle = db_svc.get_handle();
             let join_handle = db_svc.start().await.unwrap();
-            let _res = db_handle
-                .query(SCHEMA_SQL.to_string())
-                .await
-                .expect("initialize test schema");
 
             let repo = DuckDBLegacyAssignmentRepository::new(db_handle.clone());
 
