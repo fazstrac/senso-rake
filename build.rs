@@ -12,4 +12,19 @@ fn main() {
             );
         }
     }
+
+    let mut migration_definitions = definition::MIGRATIONS.to_vec();
+
+    migration_definitions.sort_by_key(|left| left.version);
+
+    for pair in migration_definitions.windows(2) {
+        if pair[1].version != pair[0].version + 1 {
+            panic!("migration definitions must have consecutive numbers");
+        }
+    }
+
+    match migration_definitions.first() {
+        Some(first) if first.version == 1 => {}
+        _ => panic!("migration definitions must start with 1"),
+    };
 }
