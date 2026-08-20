@@ -5,6 +5,12 @@ use std::sync::LazyLock;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Hash([u8; 32]);
 
+impl Hash {
+    pub fn new(data: [u8; 32]) -> Self {
+        Self(data)
+    }
+}
+
 impl fmt::Display for Hash {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
