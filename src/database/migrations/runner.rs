@@ -133,6 +133,11 @@ fn migrate_in_transaction(
         Vec::new()
     };
 
+    // These two table names are "reserved table names" - their existence determines
+    // if database is considered as unversioned SensoRake database
+    //
+    // Migration scripts will try to create also views, which will fail if they are already
+    // existing. That is considered to be a case where user needs to migrate the database manually
     if (table_exists(conn, "mappings")? || table_exists(conn, "data_landing")?)
         && applied_migrations.is_empty()
     {
