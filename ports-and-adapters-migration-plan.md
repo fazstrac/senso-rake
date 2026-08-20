@@ -377,15 +377,16 @@ executes it.
 Keep DuckDB behind its existing single-owner worker. This phase adapts
 `DbHandle`; it does not replace it.
 
-- [ ] Implement the output trait with a DuckDB-backed adapter that uses
+- [x] Implement the output trait with a DuckDB-backed adapter that uses
   `DbHandle`.
-- [ ] Move the existing `/mappings` SQL from `src/http/service.rs` into this
+- [x] Move the existing `/mappings` SQL from `src/http/service.rs` into this
   adapter.
-- [ ] Parse `DbHandle` JSON responses into typed adapter/application structs
+- [x] Parse `DbHandle` JSON responses into typed adapter/application structs
   inside the adapter.
-- [ ] Preserve current SQL behavior unless a deliberate behavior change is
+- [x] Preserve current SQL behavior unless a deliberate behavior change is
   listed and tested.
-- [ ] Add repository/adapter tests using real in-memory DuckDB.
+- [x] Add repository/adapter tests using real in-memory DuckDB.
+- [x] Add transactional database migrations with schema-version and checksum validation.
 
 #### Phase 2.5: Move HTTP handlers onto input ports
 
