@@ -58,6 +58,23 @@ impl Service for MqttService {
     }
 }
 
+async fn flush_pending(
+    db: &DbHandle,
+    rows: &mut Vec<mqtt_buffer::ProcessedMsg>,
+    unflushed_counter: &IntCounter,
+) -> anyhow::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let batch = mqtt_buffer::create_arrow_record_batch(rows)?;
+    db.insert_batch(batch, "data_landing").await?;
+
+    rows.clear();
+    unflushed_counter.reset();
+    Ok(())
+}
+
 pub async fn start_mqtt_worker(
     counter_tot_msg: IntCounter,
     counter_unflushed_msg: IntCounter,
@@ -182,18 +199,13 @@ pub async fn start_mqtt_worker(
                             // check if we should flush to DuckDB
                             if counter_unflushed_msg.get() >= 500 {
                                 // Every 500 hits, flush to DuckDB
-                                match mqtt_buffer::create_arrow_record_batch(&all_rows) {
-                                    Ok(batch) => {
-                                        match db.insert_batch(batch, "data_landing").await {
-                                            Ok(_) => {
-                                                info!("Flushed {} rows to DuckDB", all_rows.len());
-                                                all_rows.clear();
-                                                counter_unflushed_msg.reset();
-                                            }
-                                        Err(e) => error!("Error flushing to DuckDB: {}", e),
-                                        }
+                                let len = all_rows.len();
+
+                                match flush_pending(&db, &mut all_rows, &counter_unflushed_msg).await {
+                                    Ok(_) => {
+                                        info!("Every 500 row flush: Flushed {} rows to DuckDB", len);
                                     }
-                                    Err(e) => error!("Error creating Arrow batch: {}", e),
+                                    Err(e) => error!("Error flushing data: {}", e),
                                 }
                             }
                         }
@@ -214,18 +226,13 @@ pub async fn start_mqtt_worker(
                 // Timer tick
                 _ = interval_flush.tick() => {
                     // Periodic flush to DuckDB
-                    if !all_rows.is_empty() {
-                        match mqtt_buffer::create_arrow_record_batch(&all_rows) {
-                            Ok(batch) => match db.insert_batch(batch, "data_landing").await {
-                                Ok(_) => {
-                                    info!("Periodic flush: Flushed {} rows to DuckDB", all_rows.len());
-                                    all_rows.clear();
-                                    counter_unflushed_msg.reset();
-                                }
-                                Err(e) => error!("Error during periodic flush to DuckDB: {}", e),
-                            },
-                            Err(e) => error!("Error creating Arrow batch: {}", e),
+                    let len = all_rows.len();
+
+                    match flush_pending(&db, &mut all_rows, &counter_unflushed_msg).await {
+                        Ok(_) => {
+                            info!("Periodic flush: Flushed {} rows to DuckDB", len);
                         }
+                        Err(e) => error!("Error flushing data: {}", e),
                     }
                 }
                 // Shutdown signal
@@ -233,17 +240,13 @@ pub async fn start_mqtt_worker(
                     // Perform final flush before exiting
                     info!("MQTT loop received shutdown signal, exiting.");
 
-                    if !all_rows.is_empty() {
-                        match mqtt_buffer::create_arrow_record_batch(&all_rows) {
-                            Ok(batch) => match db.insert_batch(batch, "data_landing").await {
-                                Ok(_) => {
-                                    info!("Shutdown flush: Flushed {} rows to DuckDB", all_rows.len());
-                                    all_rows.clear();
-                                }
-                                Err(e) => error!("Error during shutdown flush to DuckDB: {}", e),
-                            }
-                            Err(e) => error!("Error creating Arrow batch during shutdown: {}", e),
+                    let len = all_rows.len();
+
+                    match flush_pending(&db, &mut all_rows, &counter_unflushed_msg).await {
+                        Ok(_) => {
+                            info!("Shutdown flush: Flushed {} rows to DuckDB", len);
                         }
+                        Err(e) => error!("Error flushing data: {}", e),
                     }
 
                     info!("Final MQTT loop cleanup done, exiting.");
@@ -256,4 +259,157 @@ pub async fn start_mqtt_worker(
     });
 
     Ok(join_handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crossbeam_channel::{Receiver, TryRecvError};
+
+    use crate::database::{DbCommand::InsertBatch, DbHandle, DbJob, DbResponse::InsertResult};
+    use prometheus::IntCounter;
+
+    fn fake_db() -> (DbHandle, Receiver<DbJob>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        (DbHandle::new(tx), rx)
+    }
+
+    enum ExpectedDbCommand {
+        InsertBatch { expected_row_count: usize },
+    }
+
+    struct EventHandlingTestCase {
+        name: &'static str,
+        rows: Vec<mqtt_buffer::ProcessedMsg>,
+        unflushed_counter: u64,
+        expected_db_command: Option<ExpectedDbCommand>,
+        will_error: bool,
+    }
+
+    #[tokio::test]
+    async fn flush_pending_follows_contract() {
+        let cases = vec![
+            // test cases
+            EventHandlingTestCase {
+                name: "empty_buffer_does_not_send_database_job",
+                rows: Vec::new(),
+                unflushed_counter: 0,
+                expected_db_command: None,
+                will_error: false,
+            },
+            EventHandlingTestCase {
+                name: "failed_flush_keeps_rows_for_retry",
+                rows: vec![mqtt_buffer::process_message(
+                    r#"{"time": "1704643200.123456", "field": "value"}"#,
+                )],
+                unflushed_counter: 1,
+                expected_db_command: Some(ExpectedDbCommand::InsertBatch {
+                    expected_row_count: 1,
+                }),
+                will_error: true,
+            },
+            EventHandlingTestCase {
+                name: "successful_flush_sends_all_rows_and_clears_buffer_one_message",
+                rows: vec![mqtt_buffer::process_message(
+                    r#"{"time": "1704643200.123456", "field": "value"}"#,
+                )],
+                unflushed_counter: 1,
+                expected_db_command: Some(ExpectedDbCommand::InsertBatch {
+                    expected_row_count: 1,
+                }),
+                will_error: false,
+            },
+            EventHandlingTestCase {
+                name: "successful_flush_sends_all_rows_and_clears_buffer_multiple_messages",
+                rows: vec![
+                    mqtt_buffer::process_message(
+                        r#"{"time": "1704643200.123456", "field": "value1"}"#,
+                    ),
+                    mqtt_buffer::process_message(
+                        r#"{"time": "1704643200.123457", "field": "value2"}"#,
+                    ),
+                ],
+                unflushed_counter: 2,
+                expected_db_command: Some(ExpectedDbCommand::InsertBatch {
+                    expected_row_count: 2,
+                }),
+                will_error: false,
+            },
+        ];
+
+        for mut case in cases {
+            let (handle, rx) = fake_db();
+            let counter = IntCounter::new(
+                "router_test_requests_total",
+                "Requests observed by the router test",
+            )
+            .unwrap();
+
+            let worker_rx = rx.clone();
+
+            let orig_rows = case.rows.clone();
+            let name = case.name;
+
+            let worker = case.expected_db_command.map(|expected| {
+                std::thread::spawn(move || {
+                    let job = worker_rx.recv().unwrap();
+
+                    match (expected, job.command) {
+                        (
+                            ExpectedDbCommand::InsertBatch { expected_row_count },
+                            InsertBatch(batch, table),
+                        ) => {
+                            // Internal check - the table name remains correct
+                            assert_eq!(table, "data_landing");
+                            assert_eq!(batch.num_rows(), expected_row_count);
+
+                            match case.will_error {
+                                true => job
+                                    .response
+                                    .send(Err(anyhow::anyhow!("Planned error in test")))
+                                    .unwrap(),
+                                false => job.response.send(Ok(InsertResult)).unwrap(),
+                            }
+                        }
+                        _ => panic!("{name}: unexpected database command"),
+                    }
+                })
+            });
+            counter.reset();
+            counter.inc_by(case.unflushed_counter);
+
+            match flush_pending(&handle, &mut case.rows, &counter).await {
+                Ok(_) => {
+                    // Verify this wasn't supposed to error
+                    assert!(!case.will_error, "{name}");
+                    // Verify the counter gets reset
+                    assert_eq!(counter.get(), 0);
+                    // Verify the rows get consumed
+                    assert_eq!(case.rows.len(), 0)
+                }
+                Err(e) => {
+                    // Verify that we were supposed to error here
+                    assert!(case.will_error, "{name}");
+                    // Verify the errors is due to our scaffolding, not something else - redundant with the above
+                    assert_eq!(e.to_string(), "Planned error in test", "{name}");
+                    // Verify the counter remains unchanged
+                    assert_eq!(counter.get(), case.unflushed_counter);
+                    // Verify the rows remain unchanged
+                    assert_eq!(case.rows, orig_rows)
+                }
+            }
+
+            match worker {
+                Some(worker) => worker.join().unwrap(),
+                None => match rx.try_recv() {
+                    Err(TryRecvError::Empty) => {}
+                    Ok(_) => panic!("{} unexpectedly sent a database job", case.name),
+                    Err(TryRecvError::Disconnected) => {
+                        panic!("{} database channel unexpectedly disconnected", case.name)
+                    }
+                },
+            }
+        }
+    }
 }

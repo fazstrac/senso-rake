@@ -1,6 +1,12 @@
+mod legacy_assignments;
+mod migrations;
 mod service;
 
 pub mod schema; // Needed for integration tests
+pub use legacy_assignments::DuckDBLegacyAssignmentRepository;
+pub use migrations::{
+    Hash, MIGRATIONS, MigrationDefinition, MigrationError, MigrationRecord, migrate_database,
+};
 pub use service::DbHandle;
 pub use service::DbService;
 

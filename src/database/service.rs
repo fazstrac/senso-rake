@@ -1,6 +1,6 @@
 use log::{error, info};
 
-use crate::database::schema;
+use crate::database::{migrate_database, schema};
 // Database interaction module
 use crate::service::{Service, ServiceType};
 
@@ -65,6 +65,7 @@ pub struct DbJob {
     pub response: tokio::sync::oneshot::Sender<anyhow::Result<DbResponse>>,
 }
 
+#[derive(Debug)]
 pub enum DbResponse {
     QueryResult(String),
     // ExecuteBatchResult,
@@ -171,7 +172,7 @@ fn start_db_worker(
     rx: Receiver<DbJob>,
     shutdown_rx: Receiver<()>,
 ) -> anyhow::Result<JoinHandle<()>> {
-    let conn = match path.as_deref() {
+    let mut conn = match path.as_deref() {
         Some(p) => Connection::open(p)
             .map_err(|e| anyhow::anyhow!("Failed to open DuckDB at path {}: {}", p, e)),
         None => Connection::open_in_memory()
@@ -186,16 +187,9 @@ fn start_db_worker(
     let ticker =
         crossbeam_channel::tick(std::time::Duration::from_secs(table_update_interval_secs));
 
-    // Initialize the database
-    // Consider if this could be done externally via eg init scripts
-    let res = conn.execute_batch(&format!(
-        "BEGIN; {} {} COMMIT; CHECKPOINT;",
-        schema::SCHEMA_SQL,
-        schema::UPDATE_TABLES_SQL
-    ));
-    info!("Database initialized successfully");
+    migrate_database(&mut conn).map_err(|e| anyhow::anyhow!("Database migration failed {e:?}"))?;
 
-    res.map_err(|e| anyhow::anyhow!("Error initializing database: {}", e))?;
+    info!("Database initialized successfully");
 
     // Spawn a blocking thread that owns the DuckDB connection.
     // TODO: Handle connection errors more gracefully - currently panics on failure which is not OK
@@ -326,6 +320,11 @@ fn handle_db_job(job: DbJob, conn: &Connection) -> anyhow::Result<()> {
                     }
                     3 => {
                         let p: [&dyn duckdb::ToSql; 3] = [&params[0], &params[1], &params[2]];
+                        stmt.query_arrow(&p)?
+                    }
+                    4 => {
+                        let p: [&dyn duckdb::ToSql; 4] =
+                            [&params[0], &params[1], &params[2], &params[3]];
                         stmt.query_arrow(&p)?
                     }
                     _ => {

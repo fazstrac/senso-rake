@@ -1,8 +1,22 @@
+use prometheus::Registry;
+use std::sync::Arc;
+
 use duckdb::Connection;
 
 // Pull real schema SQL and Arrow batch creation from the crate
-use senso_rake::database::schema::SCHEMA_SQL;
+use senso_rake::database::DbService;
+use senso_rake::database::migrate_database;
+use senso_rake::http::build_router;
 use senso_rake::mqtt::mqtt_buffer::{create_arrow_record_batch, process_message};
+use senso_rake::service::Service;
+
+use axum::{
+    body::{Body, to_bytes},
+    http::{Request, StatusCode},
+};
+use crossbeam_channel::unbounded;
+
+use tower::ServiceExt;
 
 fn sample_rows() -> Vec<senso_rake::mqtt::mqtt_buffer::ProcessedMsg> {
     // Minimal sample messages exercising the timestamp parsing
@@ -38,8 +52,9 @@ fn sample_rows() -> Vec<senso_rake::mqtt::mqtt_buffer::ProcessedMsg> {
 #[test]
 fn insert_arrow_batch_into_duckdb_should_error_on_name_mismatch() {
     // Create real DuckDB connection and initialize schema
-    let conn = Connection::open_in_memory().expect("open in-memory duckdb");
-    conn.execute_batch(SCHEMA_SQL)
+    let mut conn = Connection::open_in_memory().expect("open in-memory duckdb");
+    migrate_database(&mut conn)
+        .map_err(|e| anyhow::anyhow!("Migration error {:?}", e))
         .expect("apply real schema SQL");
 
     // Build Arrow RecordBatch from MQTT normalization
@@ -66,9 +81,8 @@ fn insert_arrow_batch_into_duckdb_should_error_on_name_mismatch() {
 #[test]
 fn insert_arrow_batch_into_duckdb_succeeds_when_schema_matches() {
     // Create real DuckDB connection and initialize schema
-    let conn = Connection::open_in_memory().expect("open in-memory duckdb");
-    conn.execute_batch(SCHEMA_SQL)
-        .expect("apply real schema SQL");
+    let mut conn = Connection::open_in_memory().expect("open in-memory duckdb");
+    migrate_database(&mut conn).expect("apply real schema SQL");
 
     // Build original Arrow RecordBatch and then fix the field name to match table schema
     let rows = sample_rows();
@@ -107,4 +121,65 @@ fn insert_arrow_batch_into_duckdb_succeeds_when_schema_matches() {
     let row = rows_iter.next().expect("first row").expect("row ok");
     let count: i64 = row.get(0).expect("extract count");
     assert_eq!(count, 2, "expected two rows inserted");
+}
+
+// Ports and adapter migration notes:
+// - Strong coupling between http and database services was necessary to implement this test,
+//   that should be simpler and not so tight. Now the implementation is tied tightly
+//   to DuckDB.
+//
+// TODO: migrate these notes into the changelog once the migration is ready to merge
+//
+
+#[tokio::test]
+async fn test_mapping_against_in_memory_duckdb() {
+    let (db_shutdown_tx, db_shutdown_rx) = unbounded();
+    let registry = Arc::new(Registry::new());
+    let db_svc = DbService::new(None, db_shutdown_rx).unwrap();
+    let db_handle = db_svc.get_handle();
+
+    let join_handle = db_svc.start().await.unwrap();
+
+    let router = build_router(db_handle.clone(), registry);
+
+    let new_mapping = r#"{
+        "model": "sensor-a",
+        "id": "123",
+        "validity_start": "2026-06-28T12:00:00Z",
+        "description": "Livingroom"
+    }"#;
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mappings")
+                .header("content-type", "application/json")
+                .body(Body::from(new_mapping))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    db_shutdown_tx.send(()).unwrap();
+
+    join_handle.await.unwrap();
+
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+    let input_json: serde_json::Value = serde_json::from_str(new_mapping).unwrap();
+    let mut response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let mapping_id = response_json
+        .as_object_mut()
+        .unwrap()
+        .remove("mapping_id")
+        .expect("response should contain mapping_id");
+
+    // new database - we should be getting mapping id 1
+    assert_eq!(mapping_id.as_i64(), Some(1));
+    assert_eq!(response_json, input_json);
+
+    assert_eq!(status, StatusCode::CREATED);
 }
